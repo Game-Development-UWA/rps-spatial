@@ -23,12 +23,9 @@ class Clan:
     while iters < max_iters:
       iters += 1
 
-      if WRAP:
-        self.positions %= GRIDSIZE
-      else:
-        mask = (np.clip(self.positions, 0, GRIDSIZE - 1) != self.positions)
-        self.positions -= self.velocities * mask
-        self.velocities *= 1 - mask
+      mask = (np.clip(self.positions, 0, GRIDSIZE - 1) != self.positions)
+      self.positions -= self.velocities * mask
+      self.velocities *= 1 - mask
 
       flat_positions = self.positions[:, 1] * GRIDSIZE + self.positions[:, 0]
       _, inverse, counts = np.unique(flat_positions, return_inverse=True, return_counts=True)

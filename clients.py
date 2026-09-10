@@ -35,6 +35,35 @@ class Simple(Client):
     velocities = np.round(poses / norms).astype(int)
     return velocities
 
+class Smple(Client):
+  def __init__(self, fear):
+    super().__init__()
+    self.fear = fear
+
+  def getResponse(self, poses, preyposes, predposes):
+    preycentre = np.mean(preyposes, axis=0)
+    predcentre = np.mean(predposes, axis=0)
+
+    attraction = preycentre - poses
+    repulsion = poses - predcentre
+
+    a = np.linalg.norm(attraction, axis=1, keepdims=True)
+    r = np.linalg.norm(repulsion, axis=1, keepdims=True)
+
+    aspread = np.std(preyposes, axis=0).mean()
+    rspread = np.std(predposes, axis=0).mean()
+
+    aspread = 1.0 if aspread == 0.0 else aspread
+    rspread = 1.0 if rspread == 0.0 else rspread
+
+    poses = (1 - self.fear) * attraction / a / a / aspread + self.fear * repulsion / r / r / rspread
+
+    norms = np.linalg.norm(poses, axis=1, keepdims=True)
+    norms[norms == 0] = 1
+
+    velocities = np.round(poses / norms).astype(int)
+    return velocities
+
 class Simple2(Client):
   def __init__(self):
     super().__init__()
