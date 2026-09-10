@@ -33,7 +33,10 @@ def main():
 
     # 1. Update Clan Positions
     for i, clan in enumerate(clans):
-      clan.step(clans[i - 1].positions, clans[(i + 1) % CLANS].positions)
+      clan.getResponse(clans[i - 1].positions, clans[(i + 1) % CLANS].positions)
+    
+    for clan in clans:
+      clan.step()
 
     # Standard elimination
     for i, clan in enumerate(clans):
