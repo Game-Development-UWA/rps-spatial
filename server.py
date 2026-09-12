@@ -2,13 +2,14 @@ import numpy as np
 from settings import *
 
 class Swarm:
-  def __init__(self, population, client):
+  def __init__(self, population, client, color):
     flat = np.random.choice(GRIDSIZE * GRIDSIZE, size=population, replace=False)
     xs = flat % GRIDSIZE
     ys = flat // GRIDSIZE
     self.positions = np.column_stack((xs, ys))
     self.velocities = np.zeros((population, 2), dtype=int)
     self.client = client
+    self.color = np.asarray(color, dtype=np.uint8)
 
   def getResponse(self, preyposes, predposes):
     if self.positions.size == 0:

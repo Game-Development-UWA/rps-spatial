@@ -4,7 +4,6 @@ import numpy as np
 import sys
 import server
 import clients
-from colorsys import hsv_to_rgb
 
 from settings import *
 
@@ -17,9 +16,9 @@ def main():
   grid = pg.Surface((GRIDSIZE, GRIDSIZE))
   swarms = []
 
-  swarms.append(server.Swarm(SWARMSIZE, clients.Smple(0.25)))
-  swarms.append(server.Swarm(SWARMSIZE, clients.Smple(0.5)))
-  swarms.append(server.Swarm(SWARMSIZE, clients.Smple(0.75)))
+  swarms.append(server.Swarm(SWARMSIZE, clients.Smple(0.5), color=(220, 70, 70)))
+  swarms.append(server.Swarm(SWARMSIZE, clients.Smple(0.5), color=(70, 200, 90)))
+  swarms.append(server.Swarm(SWARMSIZE, clients.Smple(0.5), color=(70, 120, 230)))
 
   running = True
   while running:
@@ -49,19 +48,18 @@ def main():
         swarm.velocities = swarm.velocities[~mask]
 
     # 3. Direct Pixel Rendering
-    for i, swarm in enumerate(swarms):
+    for swarm in swarms:
       if swarm.positions.size == 0:
         continue
-      color = (np.array(hsv_to_rgb(i / SWARMS, 1, 1)) * 255).astype(np.uint8)
       xs, ys = swarm.positions[:, 0], swarm.positions[:, 1]
-      pixels[xs, ys] = color
+      pixels[xs, ys] = swarm.color
 
     del pixels
 
     screen.blit(pg.transform.scale(grid, WINDOWSIZE), (0, 0))
     pg.display.flip()
 
-    clock.tick(20)
+    clock.tick(150)
 
   pg.quit()
   sys.exit()
