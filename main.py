@@ -15,11 +15,11 @@ def main():
 
   clock = pg.time.Clock()
   grid = pg.Surface((GRIDSIZE, GRIDSIZE))
-  clans = []
+  swarms = []
 
-  clans.append(server.Clan(CLANSIZE, clients.Smple(0.25)))
-  clans.append(server.Clan(CLANSIZE, clients.Smple(0.5)))
-  clans.append(server.Clan(CLANSIZE, clients.Smple(0.75)))
+  swarms.append(server.Swarm(SWARMSIZE, clients.Smple(0.25)))
+  swarms.append(server.Swarm(SWARMSIZE, clients.Smple(0.5)))
+  swarms.append(server.Swarm(SWARMSIZE, clients.Smple(0.75)))
 
   running = True
   while running:
@@ -31,29 +31,29 @@ def main():
     grid.fill(BACKGROUND)
     pixels = pg.surfarray.pixels3d(grid)
 
-    # 1. Update Clan Positions
-    for i, clan in enumerate(clans):
-      clan.getResponse(clans[i - 1].positions, clans[(i + 1) % CLANS].positions)
+    # 1. Update Swarm Positions
+    for i, swarm in enumerate(swarms):
+      swarm.getResponse(swarms[i - 1].positions, swarms[(i + 1) % SWARMS].positions)
     
-    for clan in clans:
-      clan.step()
+    for swarm in swarms:
+      swarm.step()
 
     # Standard elimination
-    for i, clan in enumerate(clans):
-      predposes = clans[(i + 1) % CLANS].positions
-      if clan.positions.size > 0 and predposes.size > 0:
-        keys_clan = clan.positions[:, 1] * GRIDSIZE + clan.positions[:, 0]
+    for i, swarm in enumerate(swarms):
+      predposes = swarms[(i + 1) % SWARMS].positions
+      if swarm.positions.size > 0 and predposes.size > 0:
+        keys_swarm = swarm.positions[:, 1] * GRIDSIZE + swarm.positions[:, 0]
         keys_pred = predposes[:, 1] * GRIDSIZE + predposes[:, 0]
-        mask = np.isin(keys_clan, keys_pred)
-        clan.positions = clan.positions[~mask]
-        clan.velocities = clan.velocities[~mask]
+        mask = np.isin(keys_swarm, keys_pred)
+        swarm.positions = swarm.positions[~mask]
+        swarm.velocities = swarm.velocities[~mask]
 
     # 3. Direct Pixel Rendering
-    for i, clan in enumerate(clans):
-      if clan.positions.size == 0:
+    for i, swarm in enumerate(swarms):
+      if swarm.positions.size == 0:
         continue
-      color = (np.array(hsv_to_rgb(i / CLANS, 1, 1)) * 255).astype(np.uint8)
-      xs, ys = clan.positions[:, 0], clan.positions[:, 1]
+      color = (np.array(hsv_to_rgb(i / SWARMS, 1, 1)) * 255).astype(np.uint8)
+      xs, ys = swarm.positions[:, 0], swarm.positions[:, 1]
       pixels[xs, ys] = color
 
     del pixels

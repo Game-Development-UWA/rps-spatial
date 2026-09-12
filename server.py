@@ -1,7 +1,7 @@
 import numpy as np
 from settings import *
 
-class Clan:
+class Swarm:
   def __init__(self, population, client):
     flat = np.random.choice(GRIDSIZE * GRIDSIZE, size=population, replace=False)
     xs = flat % GRIDSIZE
