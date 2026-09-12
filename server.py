@@ -14,6 +14,7 @@ class Game:
   def run(self):
     n = len(self.swarms)
     running = True
+    step = 0
     while running:
       for event in pg.event.get():
         if event.type == pg.QUIT:
@@ -52,8 +53,24 @@ class Game:
       pg.display.flip()
       self.clock.tick(150)
 
+      # 4. End condition
+      step += 1
+      living = sum(1 for swarm in self.swarms if swarm.positions.size > 0)
+      if step >= MAX_STEPS or living <= 2:
+        running = False
+
     pg.quit()
-    sys.exit()
+    return self.metrics()
+
+  def metrics(self):
+    results = []
+    for i, swarm in enumerate(self.swarms):
+      living = 0 if swarm.positions.size == 0 else len(swarm.positions)
+      prey = self.swarms[i - 1]
+      prey_surviving = 0 if prey.positions.size == 0 else len(prey.positions)
+      score = living - prey_surviving
+      results.append((i, living, prey_surviving, score, swarm.color))
+    return results
 
 class Swarm:
   def __init__(self, population, client, color):
