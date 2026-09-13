@@ -1,3 +1,4 @@
+import time
 from server import Game, Swarm
 import clients
 
@@ -9,11 +10,14 @@ def main():
     Swarm(SWARMSIZE, clients.Smple(0.5), color=(70, 200, 90)),
     Swarm(SWARMSIZE, clients.Smple(0.5), color=(70, 120, 230)),
   ]
-  results = Game(swarms).run()
+  started = time.perf_counter()
+  results = Game(swarms, gui=False).run()
+  elapsed = time.perf_counter() - started
 
   for i, living, prey_surviving, score, color in results:
     r, g, b = (int(c) for c in color)
     print(f"\033[38;2;{r};{g};{b}mswarm {i}: living={living} prey_surviving={prey_surviving} score={score}\033[0m")
+  print(f"elapsed={elapsed:.3f}s")
 
 if __name__ == "__main__":
   main()
