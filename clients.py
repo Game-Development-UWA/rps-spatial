@@ -6,6 +6,16 @@ class Client:
   def __init__(self):
     pass
 
+  def __str__(self):
+    name = type(self).__name__
+    params = vars(self)
+    if not params:
+      return name
+    return f"{name}({', '.join(f'{k}={v}' for k, v in params.items())})"
+
+  def __repr__(self):
+    return str(self)
+
   def getResponse(self, poses, preyposes, predposes):
 
     return np.random.randint(- 1, 2, size=(len(poses), 2))

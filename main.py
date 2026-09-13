@@ -1,23 +1,42 @@
 import time
-from server import Game, Swarm
 import clients
-
-from settings import *
+from server import Game, Tournament
 
 def main():
-  swarms = [
-    Swarm(SWARMSIZE, clients.Smple(0.5), color=(220, 70, 70)),
-    Swarm(SWARMSIZE, clients.Smple(0.5), color=(70, 200, 90)),
-    Swarm(SWARMSIZE, clients.Smple(0.5), color=(70, 120, 230)),
+  population = [
+    clients.Smple(0.3),
+    clients.Smple(0.5),
+    clients.Smple(0.7),
+    clients.Simple(),
+    clients.Client(),
+    clients.Simple2(),
+    clients.Smple(0.4),
   ]
+  matches = [
+    (0, 1, 2),
+    (3, 1, 4),
+    (5, 6, 3),
+    (3, 1, 4),
+    (5, 6, 3),
+    (3, 1, 4),
+    (5, 6, 3),
+    (3, 1, 4),
+    (5, 6, 3),
+    (3, 1, 4),
+  ]
+
+  tournament = Tournament(population)
   started = time.perf_counter()
-  results = Game(swarms, gui=False).run()
+  results = tournament.run(matches)
   elapsed = time.perf_counter() - started
 
-  for i, living, prey_surviving, score, color in results:
-    r, g, b = (int(c) for c in color)
-    print(f"\033[38;2;{r};{g};{b}mswarm {i}: living={living} prey_surviving={prey_surviving} score={score}\033[0m")
+  tournament.print(results)
   print(f"elapsed={elapsed:.3f}s")
+
+  finalists = tournament.top(results, 3)
+  print('finalists:', ', '.join(str(c) for c in finalists))
+  final = Game(finalists)
+  final.print(final.run())
 
 if __name__ == "__main__":
   main()
