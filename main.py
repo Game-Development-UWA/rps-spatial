@@ -12,28 +12,15 @@ def main():
     clients.Simple2(),
     clients.Smple(0.4),
   ]
-  matches = [
-    (0, 1, 2),
-    (3, 1, 4),
-    (5, 6, 3),
-    (3, 1, 4),
-    (5, 6, 3),
-    (3, 1, 4),
-    (5, 6, 3),
-    (3, 1, 4),
-    (5, 6, 3),
-    (3, 1, 4),
-  ]
-
   tournament = Tournament(population)
   started = time.perf_counter()
-  results = tournament.run(matches)
+  results = tournament.run()
   elapsed = time.perf_counter() - started
 
   tournament.print(results)
   print(f"elapsed={elapsed:.3f}s")
 
-  finalists = tournament.top(results, 3)
+  finalists = tournament.top(results)
   print('finalists:', ', '.join(str(c) for c in finalists))
   final = Game(finalists)
   final.print(final.run())

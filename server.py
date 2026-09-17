@@ -8,7 +8,7 @@ import numpy as np
 
 from settings import (
     GRIDSIZE, WINDOWSIZE,
-    SWARMSIZE, MAX_STEPS, SAMPLE,
+    SWARMS, SWARMSIZE, MAX_STEPS, SAMPLE,
     BACKGROUND
 )
 
@@ -229,9 +229,14 @@ class Tournament:
     def _play(clients):
         return Game(clients, gui=False).run()
 
-    def run(self, matches=None, sample=SAMPLE):
+    def run(self, matches=None, sample=SAMPLE, swarms=SWARMS):
         if matches is None:
-            matches = list(combinations(range(len(self.population)), 3))
+            if len(self.population) < swarms:
+                raise ValueError(
+                    f'need at least {swarms} clients to fill a match, '
+                    f'population has {len(self.population)}'
+                )
+            matches = list(combinations(range(len(self.population)), swarms))
 
         jobs = [tuple(self.population[i] for i in match) for match in matches for _ in range(sample)]
         if not jobs:
@@ -260,7 +265,7 @@ class Tournament:
     def fitness(self, results):
         return results['scores']
 
-    def top(self, results, n=3):
+    def top(self, results, n=SWARMS):
         ids = nlargest(n, range(len(self.population)), key=results['scores'].__getitem__)
         return [self.population[i] for i in ids]
 
