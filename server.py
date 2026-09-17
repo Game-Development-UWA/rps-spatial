@@ -20,6 +20,16 @@ def generate_colours(n, saturation=0.75, value=0.85):
     ]
 
 
+def gather(swarms, indices):
+    """One (N, 2) array of every unit in `indices`. Clients take a single enemy
+    array, so the k prey (or k predators) are concatenated into one."""
+    parts = [swarms[i].positions for i in indices if swarms[i].positions.size]
+    if not parts:
+        return np.empty((0, 2), dtype=int)
+    # the single-part fast path keeps k = 1 allocating exactly as it did before
+    return parts[0] if len(parts) == 1 else np.concatenate(parts)
+
+
 def print_match(rows, population, title=None):
     if title:
         print(title)
@@ -49,11 +59,16 @@ class Swarm:
         self.velocities = np.zeros((population, 2), dtype=int)
         self.client = client
         self.colour = np.asarray(colour, dtype=np.uint8)
-        # prey units eaten, cumulative over the whole run, never reset
         self.kills = 0
 
     def getResponse(self, preyposes, predposes):
         if self.positions.size == 0:
+            return
+        if preyposes.size == 0 and predposes.size == 0:
+            # no prey and no predators left: nothing to chase or flee.
+            # A single empty side is the client's business -- they contribute
+            # only the term they have units for.
+            self.velocities = np.zeros_like(self.velocities)
             return
         self.velocities = self.client.getResponse(self.positions, preyposes, predposes)
 
@@ -82,6 +97,15 @@ class Swarm:
 
 class Game:
     def __init__(self, clients, gui=True):
+        n = len(clients)
+        if n < 3 or n % 2 == 0:
+            raise ValueError(
+                f'generalised RPS needs an odd number of swarms >= 3, got {n}. '
+                'An even count makes i and i + n/2 beat each other, so the '
+                'relation stops being a tournament.'
+            )
+        # each swarm eats the k below it on the cycle and is eaten by the k above
+        self.k = (n - 1) // 2
         colours = generate_colours(len(clients))
         self.swarms = [Swarm(SWARMSIZE, client, colour) for client, colour in zip(clients, colours)]
         self.gui = gui
@@ -101,6 +125,8 @@ class Game:
 
     def run(self):
         n = len(self.swarms)
+        prey_of = [[(i - d) % n for d in range(1, self.k + 1)] for i in range(n)]
+        pred_of = [[(i + d) % n for d in range(1, self.k + 1)] for i in range(n)]
         running = True
         step = 0
         while running:
@@ -114,7 +140,10 @@ class Game:
 
             # Update Swarm Positions
             for i, swarm in enumerate(self.swarms):
-                swarm.getResponse(self.swarms[i - 1].positions, self.swarms[(i + 1) % n].positions)
+                swarm.getResponse(
+                    gather(self.swarms, prey_of[i]),
+                    gather(self.swarms, pred_of[i]),
+                )
             for swarm in self.swarms:
                 swarm.step()
 
@@ -128,14 +157,16 @@ class Game:
 
             dead = [np.zeros(len(key), dtype=bool) for key in keys]
 
-            # 2. Resolve every pairing against the snapshot, i eats j
-            for i in range(n):
-                j = (i - 1) % n
-                if keys[i].size == 0 or keys[j].size == 0:
-                    continue
-                eats = np.isin(keys[j], keys[i]) & ~dead[j]
-                self.swarms[i].kills += int(eats.sum())
-                dead[j] |= eats
+            # 2. Resolve every pairing against the snapshot, i eats j.
+            #    the nearest-in-cycle predator claims a shared victim.
+            for d in range(1, self.k + 1):
+                for i in range(n):
+                    j = (i - d) % n
+                    if keys[i].size == 0 or keys[j].size == 0:
+                        continue
+                    eats = np.isin(keys[j], keys[i]) & ~dead[j]
+                    self.swarms[i].kills += int(eats.sum())
+                    dead[j] |= eats
 
             # 3. Apply deletions only once every pairing is resolved
             for swarm, mask in zip(self.swarms, dead):
@@ -166,11 +197,13 @@ class Game:
         return self.metrics()
 
     def metrics(self):
+        n = len(self.swarms)
         results = []
         for i, swarm in enumerate(self.swarms):
             living = 0 if swarm.positions.size == 0 else len(swarm.positions)
-            prey = self.swarms[i - 1]
-            prey_surviving = 0 if prey.positions.size == 0 else len(prey.positions)
+            prey_surviving = sum(
+                len(self.swarms[(i - d) % n].positions) for d in range(1, self.k + 1)
+            )
             results.append({
                 'swarm': i,
                 'living': living,
