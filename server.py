@@ -29,6 +29,7 @@ def print_match(rows, population, title=None):
             f"  id {client_id} {population[client_id]}: "
             f"living={row['living']:.2f} "
             f"prey_surviving={row['prey_surviving']:.2f} "
+            f"kills={row['kills']:.1f} "
             f"score={row['score']:.2f}"
         )
 
@@ -48,6 +49,8 @@ class Swarm:
         self.velocities = np.zeros((population, 2), dtype=int)
         self.client = client
         self.colour = np.asarray(colour, dtype=np.uint8)
+        # prey units eaten, cumulative over the whole run, never reset
+        self.kills = 0
 
     def getResponse(self, preyposes, predposes):
         if self.positions.size == 0:
@@ -130,7 +133,9 @@ class Game:
                 j = (i - 1) % n
                 if keys[i].size == 0 or keys[j].size == 0:
                     continue
-                dead[j] |= np.isin(keys[j], keys[i])
+                eats = np.isin(keys[j], keys[i]) & ~dead[j]
+                self.swarms[i].kills += int(eats.sum())
+                dead[j] |= eats
 
             # 3. Apply deletions only once every pairing is resolved
             for swarm, mask in zip(self.swarms, dead):
@@ -170,6 +175,7 @@ class Game:
                 'swarm': i,
                 'living': living,
                 'prey_surviving': prey_surviving,
+                'kills': swarm.kills,
                 'score': living - prey_surviving,
             })
         return results
