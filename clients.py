@@ -37,7 +37,12 @@ class Simple(Client):
     aspread = np.std(preyposes, axis=0).mean()
     rspread = np.std(predposes, axis=0).mean()
 
-    poses = attraction / a / a / aspread + repulsion / r / r / rspread
+    aspread = 1.0 if aspread == 0.0 else aspread
+    rspread = 1.0 if rspread == 0.0 else rspread
+
+    # NaN protection because centre's np.mean(empty array) can lead to NaN
+    poses = (np.nan_to_num(attraction / a / a / aspread)
+             + np.nan_to_num(repulsion / r / r / rspread))
 
     norms = np.linalg.norm(poses, axis=1, keepdims=True)
     norms[norms == 0] = 1
@@ -66,7 +71,9 @@ class Smple(Client):
     aspread = 1.0 if aspread == 0.0 else aspread
     rspread = 1.0 if rspread == 0.0 else rspread
 
-    poses = (1 - self.fear) * attraction / a / a / aspread + self.fear * repulsion / r / r / rspread
+    # NaN protection because centre's np.mean(empty array) can lead to NaN
+    poses = (np.nan_to_num((1 - self.fear) * attraction / a / a / aspread)
+             + np.nan_to_num(self.fear * repulsion / r / r / rspread))
 
     norms = np.linalg.norm(poses, axis=1, keepdims=True)
     norms[norms == 0] = 1
