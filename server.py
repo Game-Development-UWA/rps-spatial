@@ -116,12 +116,25 @@ class Game:
                 swarm.step()
 
             # Standard elimination
-            for i, swarm in enumerate(self.swarms):
-                predposes = self.swarms[(i + 1) % n].positions
-                if swarm.positions.size > 0 and predposes.size > 0:
-                    keys_swarm = swarm.positions[:, 1] * GRIDSIZE + swarm.positions[:, 0]
-                    keys_pred = predposes[:, 1] * GRIDSIZE + predposes[:, 0]
-                    mask = np.isin(keys_swarm, keys_pred)
+            # 1. Snapshot the board
+            keys = [
+                swarm.positions[:, 1] * GRIDSIZE + swarm.positions[:, 0]
+                if swarm.positions.size else np.empty(0, dtype=int)
+                for swarm in self.swarms
+            ]
+
+            dead = [np.zeros(len(key), dtype=bool) for key in keys]
+
+            # 2. Resolve every pairing against the snapshot, i eats j
+            for i in range(n):
+                j = (i - 1) % n
+                if keys[i].size == 0 or keys[j].size == 0:
+                    continue
+                dead[j] |= np.isin(keys[j], keys[i])
+
+            # 3. Apply deletions only once every pairing is resolved
+            for swarm, mask in zip(self.swarms, dead):
+                if mask.any():
                     swarm.positions = swarm.positions[~mask]
                     swarm.velocities = swarm.velocities[~mask]
 
