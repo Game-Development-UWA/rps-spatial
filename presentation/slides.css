@@ -1,0 +1,28 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; background: #1f1f1f; color: #eee; font: 22px/1.5 system-ui, sans-serif; }
+#field {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  display: block;
+}
+.slide {
+  position: relative;
+  z-index: 1;
+  display: none;
+  min-height: 100%;
+  padding: 8vh 10vw;
+}
+.slide.active { display: flex; flex-direction: column; justify-content: center; }
+h1 { font-size: 2.4rem; font-weight: 600; margin-bottom: 0.6em; }
+p { max-width: 40em; color: #ccc; }
+.counter {
+  position: fixed;
+  right: 1.5rem;
+  bottom: 1.25rem;
+  z-index: 1;
+  font-size: 0.85rem;
+  color: #888;
+}
