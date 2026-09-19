@@ -52,9 +52,11 @@
     <section class="slide">
       <div class="content">
         <h1>Gradient Ascent</h1>
-        <p class="lede">If you can find the slope at any point in the function, you can climb without seeing the whole mountain. </p>
+        <p class="lede">If you can find the slope at any point, you can climb without seeing the whole mountain.</p>
       </div>
-      <div class="demo"></div>
+      <div class="demo">
+        <div class="demo-panel" data-demo="ascent"></div>
+      </div>
     </section>
     <section class="slide">
       <div class="content">
@@ -62,22 +64,18 @@
         <p class="lede">Move a little in the direction of the derivative. \(\alpha\) is how bold that step is: too small and you crawl, too large and you overshoot.</p>
         <p class="formula">\[x \leftarrow x + \alpha\, f'(x)\]</p>
       </div>
-      <div class="demo"></div>
-    </section>
-    <section class="slide">
-      <div class="content">
-        <h1>Hold your horses</h1>
-        <p class="lede">Newton’s method refuses a fixed \(\alpha\). It reads convexity and jumps to where a local quadratic says the slope should hit zero.</p>
-        <p class="formula">\[x \leftarrow x - \frac{f'(x)}{f''(x)}\]</p>
+      <div class="demo">
+        <div class="demo-panel" data-demo="step-alpha"></div>
       </div>
-      <div class="demo"></div>
     </section>
     <section class="slide">
       <div class="content">
         <h1>A ridge, not always the summit</h1>
         <p class="lede">Ascent stops when the slope is flat. Calculus already told you that landmark might be a local maximum.</p>
       </div>
-      <div class="demo"></div>
+      <div class="demo">
+        <div class="demo-panel" data-demo="ridge"></div>
+      </div>
     </section>
     <section class="slide">
       <div class="content">
@@ -85,7 +83,9 @@
         <p class="lede">In higher dimensions the slope is the gradient: a vector of partial derivatives.</p>
         <p class="formula">\[\theta \leftarrow \theta + \alpha\, \nabla J(\theta)\]</p>
       </div>
-      <div class="demo"></div>
+      <div class="demo">
+        <div class="demo-panel" data-demo="knobs"></div>
+      </div>
     </section>
   </section>
   <section class="stack">
@@ -95,59 +95,76 @@
         <p class="lede">No derivative, no map of the mountain. Keep one candidate. Tweak it. Move only if the tweak is better.</p>
         <p class="formula">\[x \leftarrow x' \quad\text{if}\quad f(x') > f(x)\]</p>
       </div>
-      <div class="demo"></div>
+      <div class="demo">
+        <div class="demo-panel" data-demo="hill1d"></div>
+      </div>
     </section>
     <section class="slide compare">
       <h1>One sample vs many</h1>
       <p class="lede compare-lede">Same single state; different patience with the neighbourhood.</p>
       <div class="compare-col">
         <h2>First-choice</h2>
-        <p class="lede">Sample one neighbour. If it is uphill, take it. Cheap, impatient, and often enough when most nearby tweaks still go up.</p>
+        <p class="lede">Sample one neighbour. If it is uphill, take it.</p>
         <p class="formula"></p>
         <div class="demo">
-          <div class="demo-panel"></div>
+          <div class="demo-panel" data-demo="first-choice"></div>
         </div>
       </div>
       <div class="compare-col">
         <h2>Steepest ascent</h2>
-        <p class="lede">Sample several neighbours, then take the best of the batch. You spend more evaluations to pick a stronger step.</p>
+        <p class="lede">Sample several neighbours, then take the best of the batch.</p>
         <p class="formula">\[x \leftarrow \arg\max_{x' \in N} f(x')\]</p>
         <div class="demo">
-          <div class="demo-panel"></div>
+          <div class="demo-panel" data-demo="steepest"></div>
+        </div>
+      </div>
+    </section>
+    <section class="slide compare">
+      <h1>How you tweak</h1>
+      <p class="lede compare-lede">A uniform draw treats every offset in a box as equally likely. A Gaussian prefers small nudges and only rarely throws a long jump.</p>
+      <div class="compare-col">
+        <h2>Uniform</h2>
+        <p class="lede">Every offset in a box is equally likely.</p>
+        <p class="formula"></p>
+        <div class="demo">
+          <div class="demo-panel" data-demo="tweak-uniform"></div>
+        </div>
+      </div>
+      <div class="compare-col">
+        <h2>Gaussian</h2>
+        <p class="lede">Small nudges are common; long jumps are rare. \(\sigma\) is how wide that habit is.</p>
+        <p class="formula"></p>
+        <div class="demo">
+          <div class="demo-panel" data-demo="tweak-gaussian"></div>
         </div>
       </div>
     </section>
     <section class="slide">
       <div class="content">
-        <h1>How you tweak</h1>
-        <p class="lede">A uniform draw treats every offset in a box as equally likely. A Gaussian prefers small nudges and only rarely throws a long jump.</p>
-      </div>
-      <div class="demo"></div>
-    </section>
-    <section class="slide">
-      <div class="content">
         <h1>Explore vs exploit</h1>
-        <p class="lede">Larger step sizes wander farther: more exploration, less local care. Larger samples, especially in steepest ascent, squeeze more juice from the same neighbourhood: more exploitation.</p>
+        <p class="lede">Larger steps wander farther. More samples squeeze more from the same neighbourhood.</p>
       </div>
-      <div class="demo"></div>
+      <div class="demo">
+        <div class="demo-panel" data-demo="explore"></div>
+      </div>
     </section>
     <section class="slide compare">
       <h1>I sacrificed everything for you to be here</h1>
       <p class="lede compare-lede">A greedy climb stops at the first peak. Accepting a worse neighbour is a way to leave a ridge you would otherwise call home.</p>
       <div class="compare-col">
         <h2>Simulated annealing</h2>
-        <p class="lede">Take every improvement. Take a worse move with a probability that cools over time, so early wandering gives way to a late, stubborn climb.</p>
+        <p class="lede">Take every improvement. Take a worse move with a probability that cools over time.</p>
         <p class="formula">\[P(\text{accept}) = e^{\Delta f / T}\]</p>
         <div class="demo">
-          <div class="demo-panel"></div>
+          <div class="demo-panel" data-demo="sa"></div>
         </div>
       </div>
       <div class="compare-col">
         <h2>Iterated local search</h2>
-        <p class="lede">Climb until you stall. Kick the state far enough to leave the basin, then climb again. The search is still single-state; the kick is the memory of being stuck.</p>
+        <p class="lede">Climb until you stall. Kick far enough to leave the basin, then climb again.</p>
         <p class="formula"></p>
         <div class="demo">
-          <div class="demo-panel"></div>
+          <div class="demo-panel" data-demo="ils"></div>
         </div>
       </div>
     </section>
@@ -160,7 +177,9 @@
   <script src="contours.js"></script>
   <script src="field.js"></script>
   <script src="agents.js"></script>
+  <script src="plots.js"></script>
   <script src="calculus.js"></script>
+  <script src="demos.js"></script>
   <script src="deck.js"></script>
 </body>
 </html>

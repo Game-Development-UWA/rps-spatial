@@ -33,6 +33,7 @@ class Deck {
 
   bind() {
     document.addEventListener("keydown", (e) => {
+      if (e.key === " " && e.target && e.target.closest && e.target.closest("button, input, textarea")) return;
       if (e.key === "ArrowDown") {
         e.preventDefault();
         this.goRow(this.row + 1);
@@ -167,6 +168,7 @@ class Deck {
     this.row = row;
     this.field.hintPanBias(this.motion.bias1);
     this.updatePager();
+    if (this.onNavigate) this.onNavigate(this.columns[col][row]);
   }
 
   tick() {
@@ -209,10 +211,15 @@ document.addEventListener("DOMContentLoaded", () => {
   const calcPanel = document.getElementById("calc-panel");
   const calcReadout = document.getElementById("calc-readout");
   if (calcPanel && calcReadout) new CubicProbe(calcPanel, calcReadout);
+  const demos = new DemoHost();
+  mountDemos(demos);
+  deck.onNavigate = (slide) => demos.show(slide);
+  demos.show(deck.columns[deck.col][deck.row]);
   field.beforeDraw = () => deck.tick();
   field.afterDraw = (seconds, dt) => {
     seekers.step(seconds, dt);
     seekers.draw(field.ctx, seconds);
+    demos.tick(dt);
   };
   field.start();
 });

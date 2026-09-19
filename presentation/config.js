@@ -3,8 +3,8 @@ const CONFIG = {
   field: {
     background: 31,
     bandDepth: 20,
-    lineMin: 20,
-    lineRange: 20,
+    lineMin: 10,
+    lineRange: 100,
     lineWidth: 1.15,
     levels: 22,
     zMin: -0.55,
@@ -22,7 +22,7 @@ const CONFIG = {
     seed: 42,
 
     // Landscape drift (noise-space units per second). Contours slide as tiles.
-    panSpeed: 0.014,
+    panSpeed: 0.01,
     // Screens of contour tiles kept ready ahead of / behind the camera.
     prefetchAhead: 4,
     prefetchBehind: 1,
@@ -50,17 +50,17 @@ const CONFIG = {
   },
 
   agents: {
-    count: 1,
+    count: 5,
     t1: 4,
     t2: 6,
     repeat: true,
     // Extra world, as a fraction of the visible span, on each side.
     searchMargin: 0.5,
-    speed: 0.16,
+    speed: 0.1,
     probe: 0.22,
     inertia: 0.9,
     climbOctaves: 2,
     radius: 3.2,
-    color: "#454545"
+    color: "#707070"
   }
 };

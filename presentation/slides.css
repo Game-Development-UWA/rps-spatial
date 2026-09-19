@@ -16,7 +16,7 @@ html, body { height: 100%; overflow: hidden; background: #1f1f1f; color: #eee; f
   grid-template-columns: minmax(0, 1fr) auto;
   column-gap: 0;
   align-items: stretch;
-  padding: 7vh 5vw 8.5vh;
+  padding: 5.5vh 5vw 7.4rem;
   pointer-events: none;
   transform: translateX(100%);
   will-change: transform;
@@ -31,6 +31,7 @@ html, body { height: 100%; overflow: hidden; background: #1f1f1f; color: #eee; f
 .demo {
   display: flex;
   flex-direction: column;
+  justify-content: flex-end;
   width: 0;
   min-width: 0;
   min-height: 0;
@@ -114,17 +115,18 @@ p { max-width: 34em; color: #ccc; }
 }
 .compare-col {
   display: grid;
-  grid-template-rows: auto auto 3.4rem minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(2.2rem, auto) minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
 }
 .compare-col .lede {
   max-width: none;
-  font-size: clamp(0.95rem, 1.25vw, 1.12rem);
+  font-size: clamp(0.9rem, 1.15vw, 1.05rem);
+  line-height: 1.35;
 }
 .compare-col .formula {
-  margin-top: 0.55rem;
-  min-height: 3.4rem;
+  margin-top: 0.35rem;
+  min-height: 2.2rem;
 }
 .compare-col .formula .katex {
   font-size: clamp(1.15rem, 2vw, 1.7rem);
@@ -138,12 +140,13 @@ p { max-width: 34em; color: #ccc; }
 }
 .compare-col .demo-panel {
   width: 100%;
+  min-height: 14rem;
 }
 .has-down::after {
   content: "";
   position: fixed;
   left: 50%;
-  bottom: 3.6rem;
+  bottom: 5.2rem;
   z-index: 2;
   width: 0.55rem;
   height: 0.55rem;
@@ -156,6 +159,7 @@ p { max-width: 34em; color: #ccc; }
   flex: 1;
   width: min(46vw, 38rem);
   height: 100%;
+  max-height: calc(100vh - 13.5rem);
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -164,6 +168,146 @@ p { max-width: 34em; color: #ccc; }
   border: 1px solid rgba(255, 255, 255, 0.08);
   overflow: hidden;
   pointer-events: auto;
+}
+.demo-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+.demo-stage canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.demo-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.65rem;
+  flex: 0 0 auto;
+  padding: 0.38rem 0.7rem 0.42rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.22);
+}
+.demo-bar button {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: #2a2a2a;
+  color: #ddd;
+  border-radius: 999px;
+  padding: 0.18rem 0.72rem;
+  font: 0.7rem/1.2 system-ui, sans-serif;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.demo-bar button.demo-icon {
+  width: 1.85rem;
+  height: 1.85rem;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.demo-bar button.demo-icon svg {
+  width: 0.92rem;
+  height: 0.92rem;
+  fill: currentColor;
+  display: block;
+}
+.demo-bar button:hover {
+  background: #333;
+}
+.demo-slider {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: #8a8a8a;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+}
+.demo-slider input[type="range"] {
+  width: 6.4rem;
+  accent-color: #8a8a8a;
+}
+.demo-slider strong {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #eee;
+  letter-spacing: 0;
+  text-transform: none;
+  min-width: 2.4em;
+}
+.demo-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.7rem;
+  margin-left: auto;
+  font-size: 0.68rem;
+  color: #b0b0b0;
+}
+.demo-legend span {
+  display: flex;
+  align-items: center;
+  gap: 0.28rem;
+}
+.demo-legend i {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 99px;
+  display: inline-block;
+}
+.slide:has([data-demo="explore"]) .demo-panel {
+  width: min(52vw, 44rem);
+}
+.explore-grid {
+  display: grid;
+  grid-template-columns: 1.55rem 1fr 1fr;
+  grid-template-rows: 1.25rem 1fr 1fr;
+  gap: 0.28rem 0.4rem;
+  padding: 0.4rem 0.55rem 0.25rem 0.3rem;
+}
+.explore-xlab,
+.explore-ylab {
+  color: #9a9a9a;
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+.explore-ylab {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+.explore-cell {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  border-radius: 0.55rem;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.explore-cell canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.demo-bubble {
+  position: absolute;
+  z-index: 2;
+  max-width: 12.5em;
+  padding: 0.42rem 0.7rem;
+  border-radius: 5px 14px 14px 14px;
+  background: #f3efe6;
+  color: #222;
+  font-size: 0.82rem;
+  line-height: 1.25;
+  font-weight: 600;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
 }
 .calc-stack {
   flex: 1;
@@ -224,7 +368,7 @@ p { max-width: 34em; color: #ccc; }
 .pager {
   position: fixed;
   left: 50%;
-  bottom: 1.6rem;
+  bottom: 1.35rem;
   z-index: 2;
   display: flex;
   align-items: center;
