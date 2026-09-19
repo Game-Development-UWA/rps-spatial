@@ -7,85 +7,153 @@ function easeInOut(t, easeIn, easeOut) {
 }
 
 class Deck {
-  constructor(slideSelector, pagerSelector, config, field) {
-    this.slides = [...document.querySelectorAll(slideSelector)];
+  constructor(stackSelector, pagerSelector, config, field) {
+    this.columns = [...document.querySelectorAll(stackSelector)].map((stack) =>
+      [...stack.querySelectorAll(".slide")]
+    );
+    this.slides = this.columns.flat();
     this.pager = document.querySelector(pagerSelector);
-    this.config = config;
+    this.config = config.transition || config;
+    this.pagerSpread = config.pager && config.pager.spread != null
+      ? config.pager.spread
+      : 8;
     this.field = field;
-    this.index = 0;
+    this.col = 0;
+    this.row = 0;
     this.motion = null;
-    this.pos = this.slides.map((_, i) => (i === 0 ? 0 : 100));
+    this.pos = this.slides.map(() => ({ x: 100, y: 0 }));
     this.bias0Index = 0;
     this.buildPager();
     this.bind();
     this.parkAll();
-    this.place(this.slides[0], 0);
+    this.place(this.slides[0], 0, 0);
+    this.pos[0] = { x: 0, y: 0 };
     this.updatePager();
   }
 
   bind() {
     document.addEventListener("keydown", (e) => {
-      if (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === " ") {
+      if (e.key === "ArrowDown") {
         e.preventDefault();
-        this.go(this.index + 1);
-      } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        this.goRow(this.row + 1);
+      } else if (e.key === "ArrowUp") {
         e.preventDefault();
-        this.go(this.index - 1);
+        this.goRow(this.row - 1);
+      } else if (e.key === "ArrowRight" || e.key === " ") {
+        e.preventDefault();
+        this.goCol(this.col + 1);
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        this.goCol(this.col - 1);
       } else if (e.key === "Home") {
         e.preventDefault();
-        this.go(0);
+        this.go(0, 0);
       } else if (e.key === "End") {
         e.preventDefault();
-        this.go(this.slides.length - 1);
+        this.go(this.columns.length - 1, 0);
       }
     });
   }
 
   parkAll() {
-    this.slides.forEach((slide) => this.place(slide, 100));
+    this.slides.forEach((slide) => this.place(slide, 100, 0));
   }
 
-  place(slide, pct) {
-    slide.style.transform = "translate3d(" + pct + "%,0,0)";
+  place(slide, x, y) {
+    slide.style.transform = "translate3d(" + x + "%," + y + "%,0)";
   }
 
   buildPager() {
     if (!this.pager) return;
     this.pager.innerHTML = "";
     const ms = ((this.config.duration || 0.7) * 1000) + "ms";
-    this.dots = this.slides.map(() => {
-      const dot = document.createElement("span");
-      dot.style.transitionDuration = ms;
-      this.pager.appendChild(dot);
-      return dot;
+    this.dots = this.columns.map((slides, c) => {
+      if (c > 0) {
+        const rule = document.createElement("span");
+        rule.className = "pager-rule";
+        rule.setAttribute("aria-hidden", "true");
+        rule.textContent = "|";
+        this.pager.appendChild(rule);
+      }
+      const group = document.createElement("span");
+      group.className = "pager-group";
+      this.pager.appendChild(group);
+      return slides.map(() => {
+        const dot = document.createElement("span");
+        dot.className = "pager-dot";
+        dot.style.transitionDuration = ms;
+        group.appendChild(dot);
+        return dot;
+      });
+    });
+  }
+
+  spaceDots(dots, open) {
+    const size = 10;
+    const spread = this.pagerSpread;
+    const stacked = Math.min(0, spread - size);
+    const gap = open ? spread : stacked;
+    dots.forEach((dot, r) => {
+      dot.style.marginLeft = r === 0 ? "0px" : gap + "px";
     });
   }
 
   updatePager() {
-    if (!this.dots) return;
-    this.dots.forEach((dot, k) => dot.classList.toggle("current", k === this.index));
+    if (this.dots) {
+      this.dots.forEach((group, c) => {
+        const host = group[0] && group[0].parentElement;
+        if (host) host.classList.toggle("active", c === this.col);
+        this.spaceDots(group, c === this.col);
+        group.forEach((dot, r) => dot.classList.toggle("current", c === this.col && r === this.row));
+      });
+    }
+    document.body.classList.toggle(
+      "has-down",
+      this.row < this.columns[this.col].length - 1
+    );
   }
 
-  targetsFor(index) {
-    return this.slides.map((_, i) => {
-      if (i === index) return 0;
-      return i < index ? -100 : 100;
+  targetsFor(col, row) {
+    const targets = [];
+    this.columns.forEach((slides, c) => {
+      slides.forEach((_, r) => {
+        if (c < col) targets.push({ x: -100, y: 0 });
+        else if (c > col) targets.push({ x: 100, y: 0 });
+        else if (r === row) targets.push({ x: 0, y: 0 });
+        else targets.push({ x: 0, y: r < row ? -100 : 100 });
+      });
     });
+    return targets;
   }
 
-  go(n) {
-    n = Math.max(0, Math.min(n, this.slides.length - 1));
-    if (n === this.index) return;
+  goCol(n) {
+    n = Math.max(0, Math.min(n, this.columns.length - 1));
+    this.go(n, 0);
+  }
+
+  goRow(n) {
+    const last = this.columns[this.col].length - 1;
+    n = Math.max(0, Math.min(n, last));
+    this.go(this.col, n);
+  }
+
+  go(col, row) {
+    if (col === this.col && row === this.row) return;
     const vis = this.field.config.xMax - this.field.config.xMin;
-    const startPos = this.pos.slice();
-    const targetPos = this.targetsFor(n);
+    const startPos = this.pos.map((p) => ({ x: p.x, y: p.y }));
+    const targetPos = this.targetsFor(col, row);
     for (let i = 0; i < startPos.length; i++) {
       const a = startPos[i];
       const b = targetPos[i];
-      if (Math.abs(a) > 90 && Math.abs(b) > 90 && Math.sign(a) !== Math.sign(b)) {
-        startPos[i] = b;
-        this.pos[i] = b;
-        this.place(this.slides[i], b);
+      const axOff = Math.abs(a.x) > 90;
+      const bxOff = Math.abs(b.x) > 90;
+      const ayOff = Math.abs(a.y) > 90;
+      const byOff = Math.abs(b.y) > 90;
+      const hiddenHop = (axOff || ayOff) && (bxOff || byOff) && (a.x !== b.x || a.y !== b.y);
+      if (hiddenHop) {
+        startPos[i] = { x: b.x, y: b.y };
+        this.pos[i] = { x: b.x, y: b.y };
+        this.place(this.slides[i], b.x, b.y);
       }
     }
     this.motion = {
@@ -93,9 +161,10 @@ class Deck {
       targetPos,
       t0: performance.now(),
       bias0: this.field.panBiasWorld,
-      bias1: this.bias0Index + n * this.config.panPush * vis
+      bias1: this.bias0Index + col * this.config.panPush * vis
     };
-    this.index = n;
+    this.col = col;
+    this.row = row;
     this.field.hintPanBias(this.motion.bias1);
     this.updatePager();
   }
@@ -107,14 +176,17 @@ class Deck {
     const u = easeInOut(t, easeIn, easeOut);
     const { startPos, targetPos, bias0, bias1 } = this.motion;
     for (let i = 0; i < this.slides.length; i++) {
-      const p = startPos[i] + (targetPos[i] - startPos[i]) * u;
+      const p = {
+        x: startPos[i].x + (targetPos[i].x - startPos[i].x) * u,
+        y: startPos[i].y + (targetPos[i].y - startPos[i].y) * u
+      };
       this.pos[i] = p;
-      this.place(this.slides[i], p);
+      this.place(this.slides[i], p.x, p.y);
     }
     this.field.setPanBias(bias0 + (bias1 - bias0) * u);
     if (t >= 1) {
-      this.pos = targetPos.slice();
-      for (let i = 0; i < this.slides.length; i++) this.place(this.slides[i], this.pos[i]);
+      this.pos = targetPos.map((p) => ({ x: p.x, y: p.y }));
+      for (let i = 0; i < this.slides.length; i++) this.place(this.slides[i], this.pos[i].x, this.pos[i].y);
       this.field.setPanBias(bias1);
       this.motion = null;
     }
@@ -122,12 +194,21 @@ class Deck {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  if (typeof renderMathInElement === "function") {
+    renderMathInElement(document.body, {
+      delimiters: [
+        { left: "\\[", right: "\\]", display: true },
+        { left: "\\(", right: "\\)", display: false }
+      ],
+      throwOnError: false
+    });
+  }
   const field = new TerrainField(document.getElementById("field"), CONFIG.field);
-  const deck = new Deck(".slide", "#pager", CONFIG.transition, field);
+  const deck = new Deck(".stack", "#pager", CONFIG, field);
   const seekers = new PeakSeekers(field, CONFIG.agents);
-  const calcCanvas = document.getElementById("calc-graph");
+  const calcPanel = document.getElementById("calc-panel");
   const calcReadout = document.getElementById("calc-readout");
-  if (calcCanvas && calcReadout) new CubicProbe(calcCanvas, calcReadout);
+  if (calcPanel && calcReadout) new CubicProbe(calcPanel, calcReadout);
   field.beforeDraw = () => deck.tick();
   field.afterDraw = (seconds, dt) => {
     seekers.step(seconds, dt);

@@ -12,16 +12,46 @@ html, body { height: 100%; overflow: hidden; background: #1f1f1f; color: #eee; f
   position: fixed;
   inset: 0;
   z-index: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  padding: 8vh 10vw;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 0;
+  align-items: stretch;
+  padding: 7vh 5vw 8.5vh;
   pointer-events: none;
   transform: translateX(100%);
   will-change: transform;
 }
-h1 { font-size: 2.4rem; font-weight: 600; margin-bottom: 0.6em; }
+.content {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+}
+.demo {
+  display: flex;
+  flex-direction: column;
+  width: 0;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+.demo:not(:empty) {
+  width: auto;
+  overflow: visible;
+  margin-left: 3.5vw;
+}
+h1 {
+  font-size: clamp(1.8rem, 3.2vw, 2.8rem);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  margin-bottom: 0.5em;
+}
 .title-slide {
+  padding: 8vh 10vw;
+}
+.title-slide .content {
   align-items: center;
   text-align: center;
 }
@@ -41,33 +71,91 @@ h1 { font-size: 2.4rem; font-weight: 600; margin-bottom: 0.6em; }
   color: #ccc;
   margin: 0;
 }
-p { max-width: 40em; color: #ccc; }
-.calc-slide {
-  justify-content: stretch;
-  align-items: stretch;
-  padding: 5.5vh 4.5vw 7.5vh;
-}
-.calc-col {
-  display: flex;
-  flex-direction: column;
-  width: min(72vw, 62rem);
-  max-width: 100%;
-  min-height: 0;
-  height: 100%;
-}
-.calc-slide h1 {
-  font-size: clamp(1.8rem, 3.2vw, 2.8rem);
-  letter-spacing: -0.03em;
-  margin-bottom: 0.45em;
-}
-.calc-slide .lede {
-  font-size: clamp(0.95rem, 1.35vw, 1.2rem);
+p { max-width: 34em; color: #ccc; }
+.lede {
+  font-size: clamp(1.05rem, 1.55vw, 1.28rem);
   line-height: 1.45;
-  max-width: 36em;
-  margin-bottom: 1.15rem;
+  max-width: 28em;
 }
-.calc-panel {
+.formula {
+  margin-top: 1.4rem;
+  color: #eee;
+}
+.formula .katex {
+  font-size: clamp(1.7rem, 3.4vw, 2.8rem);
+}
+.lede .katex {
+  font-size: 1.05em;
+}
+.slide.compare {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
+  column-gap: 2.6vw;
+  row-gap: 0.35rem;
+  align-items: stretch;
+}
+.slide.compare > h1,
+.slide.compare > .compare-lede {
+  grid-column: 1 / -1;
+}
+.slide.compare > h1 {
+  margin-bottom: 0.15em;
+}
+.slide.compare > .compare-lede {
+  margin-bottom: 0.85rem;
+  max-width: 42em;
+}
+.slide.compare h2 {
+  font-size: clamp(1.15rem, 1.8vw, 1.55rem);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin-bottom: 0.35em;
+}
+.compare-col {
+  display: grid;
+  grid-template-rows: auto auto 3.4rem minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+.compare-col .lede {
+  max-width: none;
+  font-size: clamp(0.95rem, 1.25vw, 1.12rem);
+}
+.compare-col .formula {
+  margin-top: 0.55rem;
+  min-height: 3.4rem;
+}
+.compare-col .formula .katex {
+  font-size: clamp(1.15rem, 2vw, 1.7rem);
+}
+.compare-col .demo {
+  width: auto;
   flex: 1;
+  min-height: 0;
+  margin: 1rem 0 0;
+  overflow: visible;
+}
+.compare-col .demo-panel {
+  width: 100%;
+}
+.has-down::after {
+  content: "";
+  position: fixed;
+  left: 50%;
+  bottom: 3.6rem;
+  z-index: 2;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-right: 2px solid rgba(238, 238, 238, 0.45);
+  border-bottom: 2px solid rgba(238, 238, 238, 0.45);
+  transform: translateX(-50%) rotate(45deg);
+  pointer-events: none;
+}
+.demo-panel {
+  flex: 1;
+  width: min(46vw, 38rem);
+  height: 100%;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -77,46 +165,61 @@ p { max-width: 40em; color: #ccc; }
   overflow: hidden;
   pointer-events: auto;
 }
-.calc-panel canvas {
+.calc-stack {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.calc-plot {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+.calc-plot:last-child {
+  border-bottom: none;
+}
+.calc-plot canvas {
   display: block;
   width: 100%;
-  flex: 1;
-  min-height: 18rem;
+  height: 100%;
   cursor: crosshair;
 }
+.calc-label {
+  position: absolute;
+  top: 0.45rem;
+  left: 0.7rem;
+  z-index: 1;
+  font-size: 0.95rem;
+  color: #b8b8b8;
+  pointer-events: none;
+}
+.calc-label .katex {
+  font-size: 1.05em;
+}
 .calc-readout {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1.35fr;
-  gap: 0.7rem 1rem;
-  padding: 0.85rem 1.05rem 1rem;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: nowrap;
+  gap: 0.45rem;
+  flex: 0 0 auto;
+  padding: 0.38rem 0.9rem 0.42rem;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(0, 0, 0, 0.22);
+  line-height: 1.2;
+  white-space: nowrap;
 }
 .calc-readout span {
-  display: block;
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: #8a8a8a;
 }
 .calc-readout strong {
-  display: block;
-  margin-top: 0.18rem;
-  font-size: 1.15rem;
+  font-size: 0.88rem;
   font-weight: 600;
   color: #eee;
-  font-variant-numeric: tabular-nums;
-}
-.calc-readout em {
-  display: block;
-  font-style: normal;
-  font-size: 0.78rem;
-  color: #7a7a7a;
-  margin-top: 0.12rem;
-}
-.calc-readout .verdict strong {
-  font-size: 1.05rem;
-  white-space: nowrap;
 }
 .pager {
   position: fixed;
@@ -125,7 +228,7 @@ p { max-width: 40em; color: #ccc; }
   z-index: 2;
   display: flex;
   align-items: center;
-  gap: 0.55rem;
+  gap: 0.45rem;
   padding: 0.52rem 0.78rem;
   transform: translateX(-50%);
   border-radius: 999px;
@@ -133,14 +236,33 @@ p { max-width: 40em; color: #ccc; }
   border: 1px solid rgba(255, 255, 255, 0.08);
   pointer-events: none;
 }
-.pager span {
+.pager-group {
+  display: flex;
+  align-items: center;
+}
+.pager-rule {
+  margin: 0 0.18rem;
+  color: #6a6a6a;
+  font-size: 0.78rem;
+  line-height: 1;
+  font-weight: 400;
+}
+.pager-dot {
+  position: relative;
+  flex: 0 0 auto;
   width: 10px;
   height: 10px;
   border-radius: 999px;
   background: #3a3a3a;
-  transition: width 0.7s ease, background 0.7s ease;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 0 0 1px rgba(8, 8, 8, 0.85);
+  transition: width 0.4s ease, margin-left 0.4s ease, background 0.4s ease;
 }
-.pager span.current {
+.pager-dot + .pager-dot {
+  margin-left: 0;
+}
+.pager-dot.current {
   width: 22px;
   background: #8a8a8a;
 }

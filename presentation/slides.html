@@ -4,48 +4,157 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Slides</title>
+  <link rel="stylesheet" href="vendor/katex/katex.min.css">
   <link rel="stylesheet" href="slides.css">
 </head>
 <body>
   <canvas id="field"></canvas>
-  <section class="slide title-slide">
-    <h1>Optimisation Algorithms</h1>
-    <h2>A Gentle Tour</h2>
+  <section class="stack">
+    <section class="slide title-slide">
+      <div class="content">
+        <h1>Optimisation Algorithms</h1>
+        <h2>A Gentle Tour</h2>
+      </div>
+      <div class="demo"></div>
+    </section>
   </section>
-  <section class="slide calc-slide">
-    <div class="calc-col">
-      <h1>Previously on Math</h1>
-      <p class="lede">For a known, differentiable function, we can find the slope of the function at any point using calculus. This can be used to find important landmarks</p>
-      <div class="calc-panel">
-        <canvas id="calc-graph"></canvas>
-        <div class="calc-readout" id="calc-readout">
-          <div>
-            <span>Slope</span>
-            <strong data-k="slope">—</strong>
-            <em>velocity</em>
+  <section class="stack">
+    <section class="slide">
+      <div class="content">
+        <h1>Previously on Math</h1>
+        <p class="lede">For a known, differentiable function, we can find the slope of the function at any point using calculus. This can be used to find important landmarks</p>
+      </div>
+      <div class="demo">
+        <div class="demo-panel" id="calc-panel">
+          <div class="calc-stack">
+            <div class="calc-plot">
+              <span class="calc-label">\(f\)</span>
+              <canvas data-plot="f"></canvas>
+            </div>
+            <div class="calc-plot">
+              <span class="calc-label">\(f'\)</span>
+              <canvas data-plot="df"></canvas>
+            </div>
+            <div class="calc-plot">
+              <span class="calc-label">\(f''\)</span>
+              <canvas data-plot="ddf"></canvas>
+            </div>
           </div>
-          <div>
-            <span>Convexity</span>
-            <strong data-k="accel">—</strong>
-            <em>acceleration</em>
-          </div>
-          <div class="verdict">
+          <div class="calc-readout" id="calc-readout">
             <span>Landmark</span>
-            <strong data-k="verdict">Hover the curve</strong>
+            <strong data-k="verdict">—</strong>
           </div>
         </div>
       </div>
-    </div>
+    </section>
   </section>
-  <section class="slide">
-    <h1>Slide three</h1>
-    <p>Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.</p>
+  <section class="stack">
+    <section class="slide">
+      <div class="content">
+        <h1>Gradient Ascent</h1>
+        <p class="lede">If you can find the slope at any point in the function, you can climb without seeing the whole mountain. </p>
+      </div>
+      <div class="demo"></div>
+    </section>
+    <section class="slide">
+      <div class="content">
+        <h1>Take a step uphill</h1>
+        <p class="lede">Move a little in the direction of the derivative. \(\alpha\) is how bold that step is: too small and you crawl, too large and you overshoot.</p>
+        <p class="formula">\[x \leftarrow x + \alpha\, f'(x)\]</p>
+      </div>
+      <div class="demo"></div>
+    </section>
+    <section class="slide">
+      <div class="content">
+        <h1>Hold your horses</h1>
+        <p class="lede">Newton’s method refuses a fixed \(\alpha\). It reads convexity and jumps to where a local quadratic says the slope should hit zero.</p>
+        <p class="formula">\[x \leftarrow x - \frac{f'(x)}{f''(x)}\]</p>
+      </div>
+      <div class="demo"></div>
+    </section>
+    <section class="slide">
+      <div class="content">
+        <h1>A ridge, not always the summit</h1>
+        <p class="lede">Ascent stops when the slope is flat. Calculus already told you that landmark might be a local maximum.</p>
+      </div>
+      <div class="demo"></div>
+    </section>
+    <section class="slide">
+      <div class="content">
+        <h1>Many knobs at once</h1>
+        <p class="lede">In higher dimensions the slope is the gradient: a vector of partial derivatives.</p>
+        <p class="formula">\[\theta \leftarrow \theta + \alpha\, \nabla J(\theta)\]</p>
+      </div>
+      <div class="demo"></div>
+    </section>
   </section>
-  <section class="slide">
-    <h1>End</h1>
-    <p>Duis aute irure dolor in reprehenderit in voluptate velit esse cillum.</p>
+  <section class="stack">
+    <section class="slide">
+      <div class="content">
+        <h1>Single-state hill climb</h1>
+        <p class="lede">No derivative, no map of the mountain. Keep one candidate. Tweak it. Move only if the tweak is better.</p>
+        <p class="formula">\[x \leftarrow x' \quad\text{if}\quad f(x') > f(x)\]</p>
+      </div>
+      <div class="demo"></div>
+    </section>
+    <section class="slide compare">
+      <h1>One sample vs many</h1>
+      <p class="lede compare-lede">Same single state; different patience with the neighbourhood.</p>
+      <div class="compare-col">
+        <h2>First-choice</h2>
+        <p class="lede">Sample one neighbour. If it is uphill, take it. Cheap, impatient, and often enough when most nearby tweaks still go up.</p>
+        <p class="formula"></p>
+        <div class="demo">
+          <div class="demo-panel"></div>
+        </div>
+      </div>
+      <div class="compare-col">
+        <h2>Steepest ascent</h2>
+        <p class="lede">Sample several neighbours, then take the best of the batch. You spend more evaluations to pick a stronger step.</p>
+        <p class="formula">\[x \leftarrow \arg\max_{x' \in N} f(x')\]</p>
+        <div class="demo">
+          <div class="demo-panel"></div>
+        </div>
+      </div>
+    </section>
+    <section class="slide">
+      <div class="content">
+        <h1>How you tweak</h1>
+        <p class="lede">A uniform draw treats every offset in a box as equally likely. A Gaussian prefers small nudges and only rarely throws a long jump.</p>
+      </div>
+      <div class="demo"></div>
+    </section>
+    <section class="slide">
+      <div class="content">
+        <h1>Explore vs exploit</h1>
+        <p class="lede">Larger step sizes wander farther: more exploration, less local care. Larger samples, especially in steepest ascent, squeeze more juice from the same neighbourhood: more exploitation.</p>
+      </div>
+      <div class="demo"></div>
+    </section>
+    <section class="slide compare">
+      <h1>I sacrificed everything for you to be here</h1>
+      <p class="lede compare-lede">A greedy climb stops at the first peak. Accepting a worse neighbour is a way to leave a ridge you would otherwise call home.</p>
+      <div class="compare-col">
+        <h2>Simulated annealing</h2>
+        <p class="lede">Take every improvement. Take a worse move with a probability that cools over time, so early wandering gives way to a late, stubborn climb.</p>
+        <p class="formula">\[P(\text{accept}) = e^{\Delta f / T}\]</p>
+        <div class="demo">
+          <div class="demo-panel"></div>
+        </div>
+      </div>
+      <div class="compare-col">
+        <h2>Iterated local search</h2>
+        <p class="lede">Climb until you stall. Kick the state far enough to leave the basin, then climb again. The search is still single-state; the kick is the memory of being stuck.</p>
+        <p class="formula"></p>
+        <div class="demo">
+          <div class="demo-panel"></div>
+        </div>
+      </div>
+    </section>
   </section>
   <div class="pager" id="pager"></div>
+  <script src="vendor/katex/katex.min.js"></script>
+  <script src="vendor/katex/auto-render.min.js"></script>
   <script src="config.js"></script>
   <script src="noise.js"></script>
   <script src="contours.js"></script>

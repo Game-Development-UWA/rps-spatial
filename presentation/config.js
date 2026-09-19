@@ -2,9 +2,9 @@
 const CONFIG = {
   field: {
     background: 31,
-    bandDepth: 15,
+    bandDepth: 20,
     lineMin: 20,
-    lineRange: 10,
+    lineRange: 20,
     lineWidth: 1.15,
     levels: 22,
     zMin: -0.55,
@@ -35,6 +35,11 @@ const CONFIG = {
     minClosedPoints: 8
   },
 
+  pager: {
+    // How far chips sit apart, in px. Used for the stacked peek and the open fan.
+    spread: 8
+  },
+
   transition: {
     duration: 0.4,
     // Higher = slower start / softer landing. 1 is linear on that half.
@@ -45,9 +50,9 @@ const CONFIG = {
   },
 
   agents: {
-    count: 2,
+    count: 1,
     t1: 4,
-    t2: 10,
+    t2: 6,
     repeat: true,
     // Extra world, as a fraction of the visible span, on each side.
     searchMargin: 0.5,
