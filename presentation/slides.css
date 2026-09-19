@@ -1,5 +1,5 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { height: 100%; background: #1f1f1f; color: #eee; font: 22px/1.5 system-ui, sans-serif; }
+html, body { height: 100%; overflow: hidden; background: #1f1f1f; color: #eee; font: 22px/1.5 system-ui, sans-serif; }
 #field {
   position: fixed;
   inset: 0;
@@ -9,20 +9,138 @@ html, body { height: 100%; background: #1f1f1f; color: #eee; font: 22px/1.5 syst
   display: block;
 }
 .slide {
-  position: relative;
-  z-index: 1;
-  display: none;
-  min-height: 100%;
-  padding: 8vh 10vw;
-}
-.slide.active { display: flex; flex-direction: column; justify-content: center; }
-h1 { font-size: 2.4rem; font-weight: 600; margin-bottom: 0.6em; }
-p { max-width: 40em; color: #ccc; }
-.counter {
   position: fixed;
-  right: 1.5rem;
-  bottom: 1.25rem;
+  inset: 0;
   z-index: 1;
-  font-size: 0.85rem;
-  color: #888;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 8vh 10vw;
+  pointer-events: none;
+  transform: translateX(100%);
+  will-change: transform;
+}
+h1 { font-size: 2.4rem; font-weight: 600; margin-bottom: 0.6em; }
+.title-slide {
+  align-items: center;
+  text-align: center;
+}
+.title-slide h1 {
+  font-size: clamp(3.4rem, 7.4vw, 8rem);
+  font-weight: 650;
+  line-height: 1.05;
+  letter-spacing: -0.035em;
+  max-width: 14em;
+  margin: 0 0 0.28em;
+}
+.title-slide h2 {
+  font-size: clamp(2rem, 4.2vw, 4.4rem);
+  font-weight: 500;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: #ccc;
+  margin: 0;
+}
+p { max-width: 40em; color: #ccc; }
+.calc-slide {
+  justify-content: stretch;
+  align-items: stretch;
+  padding: 5.5vh 4.5vw 7.5vh;
+}
+.calc-col {
+  display: flex;
+  flex-direction: column;
+  width: min(72vw, 62rem);
+  max-width: 100%;
+  min-height: 0;
+  height: 100%;
+}
+.calc-slide h1 {
+  font-size: clamp(1.8rem, 3.2vw, 2.8rem);
+  letter-spacing: -0.03em;
+  margin-bottom: 0.45em;
+}
+.calc-slide .lede {
+  font-size: clamp(0.95rem, 1.35vw, 1.2rem);
+  line-height: 1.45;
+  max-width: 36em;
+  margin-bottom: 1.15rem;
+}
+.calc-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: 1.1rem;
+  background: rgba(8, 8, 8, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  pointer-events: auto;
+}
+.calc-panel canvas {
+  display: block;
+  width: 100%;
+  flex: 1;
+  min-height: 18rem;
+  cursor: crosshair;
+}
+.calc-readout {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.35fr;
+  gap: 0.7rem 1rem;
+  padding: 0.85rem 1.05rem 1rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.22);
+}
+.calc-readout span {
+  display: block;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #8a8a8a;
+}
+.calc-readout strong {
+  display: block;
+  margin-top: 0.18rem;
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: #eee;
+  font-variant-numeric: tabular-nums;
+}
+.calc-readout em {
+  display: block;
+  font-style: normal;
+  font-size: 0.78rem;
+  color: #7a7a7a;
+  margin-top: 0.12rem;
+}
+.calc-readout .verdict strong {
+  font-size: 1.05rem;
+  white-space: nowrap;
+}
+.pager {
+  position: fixed;
+  left: 50%;
+  bottom: 1.6rem;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.52rem 0.78rem;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: rgba(12, 12, 12, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  pointer-events: none;
+}
+.pager span {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #3a3a3a;
+  transition: width 0.7s ease, background 0.7s ease;
+}
+.pager span.current {
+  width: 22px;
+  background: #8a8a8a;
 }

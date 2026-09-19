@@ -8,13 +8,34 @@
 </head>
 <body>
   <canvas id="field"></canvas>
-  <section class="slide active">
-    <h1>Title</h1>
-    <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p>
+  <section class="slide title-slide">
+    <h1>Optimisation Algorithms</h1>
+    <h2>A Gentle Tour</h2>
   </section>
-  <section class="slide">
-    <h1>Slide two</h1>
-    <p>Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.</p>
+  <section class="slide calc-slide">
+    <div class="calc-col">
+      <h1>Previously on Math</h1>
+      <p class="lede">For a known, differentiable function, we can find the slope of the function at any point using calculus. This can be used to find important landmarks</p>
+      <div class="calc-panel">
+        <canvas id="calc-graph"></canvas>
+        <div class="calc-readout" id="calc-readout">
+          <div>
+            <span>Slope</span>
+            <strong data-k="slope">—</strong>
+            <em>velocity</em>
+          </div>
+          <div>
+            <span>Convexity</span>
+            <strong data-k="accel">—</strong>
+            <em>acceleration</em>
+          </div>
+          <div class="verdict">
+            <span>Landmark</span>
+            <strong data-k="verdict">Hover the curve</strong>
+          </div>
+        </div>
+      </div>
+    </div>
   </section>
   <section class="slide">
     <h1>Slide three</h1>
@@ -24,12 +45,13 @@
     <h1>End</h1>
     <p>Duis aute irure dolor in reprehenderit in voluptate velit esse cillum.</p>
   </section>
-  <div class="counter" id="counter"></div>
+  <div class="pager" id="pager"></div>
   <script src="config.js"></script>
   <script src="noise.js"></script>
   <script src="contours.js"></script>
   <script src="field.js"></script>
   <script src="agents.js"></script>
+  <script src="calculus.js"></script>
   <script src="deck.js"></script>
 </body>
 </html>

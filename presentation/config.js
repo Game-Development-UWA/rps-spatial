@@ -3,10 +3,10 @@ const CONFIG = {
   field: {
     background: 31,
     bandDepth: 15,
-    lineMin: 3,
+    lineMin: 20,
     lineRange: 10,
     lineWidth: 1.15,
-    levels: 40,
+    levels: 22,
     zMin: -0.55,
     zMax: 0.58,
 
@@ -21,14 +21,27 @@ const CONFIG = {
     persistence: 0.40,
     seed: 42,
 
-    // Landscape drift (noise-space units per second). Contours slide as a bitmap.
+    // Landscape drift (noise-space units per second). Contours slide as tiles.
     panSpeed: 0.014,
-    // Extra screens baked on the left/right so pan does not rebuild lines.
-    panPad: 2,
+    // Screens of contour tiles kept ready ahead of / behind the camera.
+    prefetchAhead: 4,
+    prefetchBehind: 1,
+    maxTiles: 10,
+    // Milliseconds of extra bake work per frame after the visible tiles exist.
+    bakeBudgetMs: 8,
 
     cellPx: 10,
     minOpenPoints: 4,
     minClosedPoints: 8
+  },
+
+  transition: {
+    duration: 0.4,
+    // Higher = slower start / softer landing. 1 is linear on that half.
+    easeIn: 2.6,
+    easeOut: 2.2,
+    // Extra screens the landscape is shoved when advancing.
+    panPush:0.8
   },
 
   agents: {
