@@ -205,6 +205,8 @@ document.addEventListener("DOMContentLoaded", () => {
       throwOnError: false
     });
   }
+  const panelBlur = CONFIG.panel && CONFIG.panel.blur != null ? CONFIG.panel.blur : 18;
+  document.documentElement.style.setProperty("--panel-blur", panelBlur + "px");
   const field = new TerrainField(document.getElementById("field"), CONFIG.field);
   const deck = new Deck(".stack", "#pager", CONFIG, field);
   const seekers = new PeakSeekers(field, CONFIG.agents);

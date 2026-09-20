@@ -15,7 +15,6 @@
         <h1>Optimisation Algorithms</h1>
         <h2>A Gentle Tour</h2>
       </div>
-      <div class="demo"></div>
     </section>
   </section>
   <section class="stack">
@@ -93,47 +92,50 @@
       <div class="content">
         <h1>Single-state hill climb</h1>
         <p class="lede">No derivative, no map of the mountain. Keep one candidate. Tweak it. Move only if the tweak is better.</p>
-        <p class="formula">\[x \leftarrow x' \quad\text{if}\quad f(x') > f(x)\]</p>
+        <p class="formula">\[x \leftarrow x'\]</p>
+        <p class="formula">\[\text{if} \quad f(x') > f(x)\]</p>
       </div>
       <div class="demo">
         <div class="demo-panel" data-demo="hill1d"></div>
       </div>
     </section>
     <section class="slide compare">
-      <h1>One sample vs many</h1>
-      <p class="lede compare-lede">Same single state; different patience with the neighbourhood.</p>
+      <div class="content">
+        <h1>Sampling</h1>
+      </div>
       <div class="compare-col">
-        <h2>First-choice</h2>
-        <p class="lede">Sample one neighbour. If it is uphill, take it.</p>
-        <p class="formula"></p>
+        <div class="content">
+          <h2>Hill Climb</h2>
+        </div>
         <div class="demo">
           <div class="demo-panel" data-demo="first-choice"></div>
         </div>
       </div>
       <div class="compare-col">
-        <h2>Steepest ascent</h2>
-        <p class="lede">Sample several neighbours, then take the best of the batch.</p>
-        <p class="formula">\[x \leftarrow \arg\max_{x' \in N} f(x')\]</p>
+        <div class="content">
+          <h2>Steepest Ascent Hill Climb</h2>
+        </div>
         <div class="demo">
           <div class="demo-panel" data-demo="steepest"></div>
         </div>
       </div>
     </section>
     <section class="slide compare">
-      <h1>How you tweak</h1>
-      <p class="lede compare-lede">A uniform draw treats every offset in a box as equally likely. A Gaussian prefers small nudges and only rarely throws a long jump.</p>
+      <div class="content">
+        <h1>Small (and sometimes big) Tweaks</h1>
+      </div>
       <div class="compare-col">
-        <h2>Uniform</h2>
-        <p class="lede">Every offset in a box is equally likely.</p>
-        <p class="formula"></p>
+        <div class="content">
+          <h2>Uniform Distribution</h2>
+        </div>
         <div class="demo">
           <div class="demo-panel" data-demo="tweak-uniform"></div>
         </div>
       </div>
       <div class="compare-col">
-        <h2>Gaussian</h2>
-        <p class="lede">Small nudges are common; long jumps are rare. \(\sigma\) is how wide that habit is.</p>
-        <p class="formula"></p>
+        <div class="content">
+          <h2>Gaussian Distribution</h2>
+        </div>
         <div class="demo">
           <div class="demo-panel" data-demo="tweak-gaussian"></div>
         </div>
@@ -149,20 +151,24 @@
       </div>
     </section>
     <section class="slide compare">
-      <h1>I sacrificed everything for you to be here</h1>
-      <p class="lede compare-lede">A greedy climb stops at the first peak. Accepting a worse neighbour is a way to leave a ridge you would otherwise call home.</p>
+      <div class="content">
+        <h1>I sacrificed everything for you to be here</h1>
+        <p class="lede">Accepting a worse neighbour is a way to escape local maxima.</p>
+      </div>
       <div class="compare-col">
-        <h2>Simulated annealing</h2>
-        <p class="lede">Take every improvement. Take a worse move with a probability that cools over time.</p>
-        <p class="formula">\[P(\text{accept}) = e^{\Delta f / T}\]</p>
+        <div class="content">
+          <h2>Simulated annealing</h2>
+          <p class="lede">"Sometimes accept a worse outcome".</p>
+        </div>
         <div class="demo">
           <div class="demo-panel" data-demo="sa"></div>
         </div>
       </div>
       <div class="compare-col">
-        <h2>Iterated local search</h2>
-        <p class="lede">Climb until you stall. Kick far enough to leave the basin, then climb again.</p>
-        <p class="formula"></p>
+        <div class="content">
+          <h2>Iterated local search</h2>
+          <p class="lede">"Stalled in life? Run away!"</p>
+        </div>
         <div class="demo">
           <div class="demo-panel" data-demo="ils"></div>
         </div>

@@ -35,6 +35,11 @@ const CONFIG = {
     minClosedPoints: 8
   },
 
+  panel: {
+    // Backdrop blur on content and demo cards, in px.
+    blur: 3
+  },
+
   pager: {
     // How far chips sit apart, in px. Used for the stacked peek and the open fan.
     spread: 8
@@ -50,7 +55,7 @@ const CONFIG = {
   },
 
   agents: {
-    count: 5,
+    count: 2,
     t1: 4,
     t2: 6,
     repeat: true,
