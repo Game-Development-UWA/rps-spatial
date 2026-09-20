@@ -1,3 +1,5 @@
+import inspect
+
 import numpy as np
 
 from settings import (
@@ -11,10 +13,14 @@ class Client:
 
     def __str__(self):
         name = type(self).__name__
-        params = vars(self)
-        if not params:
+        parts = []
+        for pname, param in inspect.signature(type(self).__init__).parameters.items():
+            if pname == 'self' or param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
+                continue
+            parts.append(f'{pname}={getattr(self, pname)}')
+        if not parts:
             return name
-        return f"{name}({', '.join(f'{k}={v}' for k, v in params.items())})"
+        return f"{name}({', '.join(parts)})"
 
     def __repr__(self):
         return str(self)
