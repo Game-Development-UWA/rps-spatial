@@ -1,0 +1,159 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  min-height: 100%;
+  background: #FFFFFF;
+  color: #eee;
+  font: 16px/1.5 system-ui, sans-serif;
+}
+
+body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 2rem;
+}
+
+.sheet {
+  position: relative;
+  width: 210mm;
+  height: 297mm;
+  overflow: hidden;
+  background: #1f1f1f;
+  color: #eee;
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
+}
+
+#field {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  z-index: 0;
+}
+
+.content {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto 1fr auto;
+  gap: 8mm;
+  height: 100%;
+  padding: 16mm 14mm 12mm;
+  pointer-events: none;
+}
+* {font-family: 'Roboto Condensed' }
+
+.copy {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  min-width: 0;
+}
+
+h1 {
+  font-size: 18mm;
+  font-weight: 700;
+  line-height: 0.92;
+  letter-spacing: -0.02em;
+  margin-bottom: 3mm;
+}
+
+.subtitle {
+  max-width: 22em;
+  color: #ccc;
+  font-size: 7mm;
+  font-weight: 400;
+  line-height: 1.35;
+}
+
+.images {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8mm;
+  min-height: 0;
+}
+
+.slot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed rgba(238, 238, 238, 0.28);
+  background: rgba(12, 12, 12, 0.28);
+  color: #8a8a8a;
+  font-size: 3.2mm;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.slot.image {
+  height: auto;
+  min-height: 0;
+}
+
+.event {
+  grid-column: 1 / -1;
+  justify-self: end;
+  text-align: right;
+  color: #eee;
+  font-size: 10mm;
+  font-weight: 80;
+  line-height: 1.5;
+  letter-spacing: -0.01em;
+}
+
+.logos {
+  display: flex;
+  align-items: center;
+  align-self: start;
+  justify-content: flex-end;
+  gap: 5mm;
+  padding-top: 1mm;
+}
+
+.logo {
+  display: block;
+  height: 18mm;
+  width: auto;
+}
+
+.logo.gd {
+  height: 20mm;
+  mix-blend-mode: lighten;
+}
+
+.logo.ai-club {
+  height: 18mm;
+  width: 18mm;
+  object-fit: cover;
+  border-radius: 3.5mm;
+}
+
+@page {
+  size: A4 portrait;
+  margin: 0;
+}
+
+@media print {
+  html, body {
+    background: #1f1f1f;
+    min-height: auto;
+    height: auto;
+  }
+
+  body {
+    display: block;
+    padding: 0;
+  }
+
+  .sheet {
+    width: 210mm;
+    height: 297mm;
+    overflow: hidden;
+  }
+}
