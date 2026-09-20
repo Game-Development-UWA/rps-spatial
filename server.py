@@ -255,8 +255,16 @@ class Tournament:
         if not jobs:
             return {'matches': [], 'scores': [0.0] * len(self.population)}
 
-        with ProcessPoolExecutor(max_workers=self.workers) as pool:
-            raw = list(pool.map(Tournament._play, jobs))
+        workers = max(1, min(self.workers, len(jobs)))
+        if workers == 1 or len(jobs) == 1:
+            raw = [Tournament._play(job) for job in jobs]
+        else:
+            # fork copies the already-imported numpy/scipy runtime; spawn
+            # would re-import in every worker and dominate small tournaments.
+            ctx = None if sys.platform == 'win32' else mp.get_context('fork')
+            with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
+                raw = list(pool.map(Tournament._play, jobs, chunksize=1))
+
 
         report, bags = [], [[] for _ in self.population]
         for i, match in enumerate(matches):
