@@ -33,14 +33,15 @@ def main():
     heat_results = tournament.run(matches=heats, sample=1, swarms=3)
     finalists = [population[winner_of(rows)['id']] for rows in heat_results['matches']]
     final = Game(finalists)
-    final_results = final.run()
     elapsed = time.perf_counter() - started
 
+    final_results = final.run()
+    print(f'ran 3 games in {elapsed:.3f}s')
     tournament.print(heat_results)
     print('finalists:', ', '.join(str(c) for c in finalists))
     print('final')
     final.print(final_results)
-    print(f'elapsed={elapsed:.3f}s')
+
 
     # Client visualization
     new_clients = [clients.Gaussian(visualize=True), clients.Gaussian(pred_sigma=8.0, prey_sigma=24.0), clients.Gaussian(prey_weight=4.0, pred_weight=2.0, prey_sigma=12.0)]

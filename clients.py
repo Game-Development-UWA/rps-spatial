@@ -201,8 +201,9 @@ class Simple2(Client):
         return velocities
 
 
-_GRAD_DX = np.array([-1, -1, -1, 0, 0, 0, 1, 1, 1], dtype=int)
-_GRAD_DY = np.array([-1,  0,  1, -1, 0, 1, -1, 0, 1], dtype=int)
+# 8-neighbour steps only: including (0, 0) freezes units on any local peak.
+_GRAD_DX = np.array([-1, -1, -1, 0, 0, 1, 1, 1], dtype=int)
+_GRAD_DY = np.array([-1,  0,  1, -1, 1, -1, 0, 1], dtype=int)
 
 
 class Gaussian(Client):
@@ -216,13 +217,13 @@ class Gaussian(Client):
         self,
         prey_weight=1.0,
         pred_weight=1.0,
-        prey_sigma=8.0,
-        pred_sigma=8.0,
+        prey_sigma=4.0,
+        pred_sigma=4.0,
         swarm_near_weight=0.0,
         swarm_far_weight=0.0,
         swarm_near_sigma=0.0,
         swarm_far_sigma=0.0,
-        cell=4,
+        cell=2,
         visualize=False,
     ):
         super().__init__()
@@ -282,9 +283,13 @@ class Gaussian(Client):
             self._draw_field()
 
         xs, ys = self._bin(poses)
-        nx = np.clip(xs[:, None] + _GRAD_DX, 0, self._last)
-        ny = np.clip(ys[:, None] + _GRAD_DY, 0, self._last)
-        best = self._field[nx, ny].argmax(axis=1)
+        dx = xs[:, None] + _GRAD_DX
+        dy = ys[:, None] + _GRAD_DY
+        vals = self._field[np.clip(dx, 0, self._last), np.clip(dy, 0, self._last)].copy()
+        vals[(dx < 0) | (dx > self._last) | (dy < 0) | (dy > self._last)] = -np.inf
+        # plateaus otherwise all pick the first neighbour and pile into a corner
+        vals += np.random.random(vals.shape).astype(np.float32) * 1e-5
+        best = vals.argmax(axis=1)
         return np.column_stack((_GRAD_DX[best], _GRAD_DY[best]))
 
     def _draw_field(self):
