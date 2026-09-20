@@ -1,10 +1,9 @@
 import inspect
 
 import numpy as np
+from scipy.ndimage import gaussian_filter
 
-from settings import (
-    GRIDSIZE
-)
+from settings import GRIDSIZE
 
 
 class Client:
@@ -200,3 +199,129 @@ class Simple2(Client):
         velocities[zero_forces.squeeze()] = 0
 
         return velocities
+
+
+_GRAD_DX = np.array([-1, -1, -1, 0, 0, 0, 1, 1, 1], dtype=int)
+_GRAD_DY = np.array([-1,  0,  1, -1, 0, 1, -1, 0, 1], dtype=int)
+
+
+class Gaussian(Client):
+    """Coarse Gaussian potential: chase prey, flee predators, spread locally.
+
+    Occupancy is binned into `cell`×`cell` world pixels, blurred with scipy,
+    then each unit steps toward the neighbouring cell with the highest value.
+    """
+
+    def __init__(
+        self,
+        prey_weight=1.0,
+        pred_weight=1.0,
+        prey_sigma=8.0,
+        pred_sigma=8.0,
+        swarm_near_weight=0.0,
+        swarm_far_weight=0.0,
+        swarm_near_sigma=0.0,
+        swarm_far_sigma=0.0,
+        cell=4,
+        visualize=False,
+    ):
+        super().__init__()
+        self.prey_weight = prey_weight
+        self.pred_weight = pred_weight
+        self.prey_sigma = prey_sigma
+        self.pred_sigma = pred_sigma
+        self.swarm_near_weight = swarm_near_weight
+        self.swarm_far_weight = swarm_far_weight
+        self.swarm_near_sigma = swarm_near_sigma
+        self.swarm_far_sigma = swarm_far_sigma
+        self.cell = max(1, int(cell))
+        self.visualize = visualize
+        self._init_buffers()
+
+    def _init_buffers(self):
+        self._bins = (GRIDSIZE + self.cell - 1) // self.cell
+        self._last = self._bins - 1  # number of bins - 1, for indexing
+        shape = (self._bins, self._bins)
+        self._field = np.zeros(shape, dtype=np.float32)
+        self._occupancy = np.zeros(shape, dtype=np.float32)
+        self._scratch = np.zeros(shape, dtype=np.float32)
+
+    def _bin(self, positions):
+        xs = np.clip(positions[:, 0] // self.cell, 0, self._last).astype(np.intp, copy=False)
+        ys = np.clip(positions[:, 1] // self.cell, 0, self._last).astype(np.intp, copy=False)
+        return xs, ys
+
+    def getResponse(self, poses, preyposes, predposes):
+        self._field.fill(0)
+        for positions, sigma, weight in (
+            (preyposes, self.prey_sigma, self.prey_weight),
+            (predposes, self.pred_sigma, -self.pred_weight),
+            (poses, self.swarm_near_sigma, self.swarm_near_weight),
+            (poses, self.swarm_far_sigma, self.swarm_far_weight),
+        ):
+            if not weight or len(positions) == 0:
+                continue
+            xs, ys = self._bin(positions)
+
+            if sigma / self.cell <= 0.35:  # too small to blur, just add weight to exact cell
+                np.add.at(self._field, (xs, ys), weight)
+                continue
+
+            self._occupancy.fill(0)
+            np.add.at(self._occupancy, (xs, ys), weight)
+            gaussian_filter(
+                self._occupancy,
+                sigma / self.cell,
+                output=self._scratch,
+                mode='constant',
+                truncate=3.0,
+            )
+            self._field += self._scratch
+
+        if self.visualize:
+            self._draw_field()
+
+        xs, ys = self._bin(poses)
+        nx = np.clip(xs[:, None] + _GRAD_DX, 0, self._last)
+        ny = np.clip(ys[:, None] + _GRAD_DY, 0, self._last)
+        best = self._field[nx, ny].argmax(axis=1)
+        return np.column_stack((_GRAD_DX[best], _GRAD_DY[best]))
+
+    def _draw_field(self):
+        try:
+            if getattr(self, '_texture', None) is None:
+                import pygame as pg
+                from pygame._sdl2.video import Window, Renderer, Texture
+
+                if not pg.get_init():
+                    pg.init()
+                self._pg = pg
+                scale = max(4, 600 // self._bins)
+                self._window = Window("Gaussian field", size=(self._bins * scale, self._bins * scale))
+                self._renderer = Renderer(self._window)
+                self._Texture = Texture
+                self._texture = None
+        except Exception:
+            self.visualize = False
+            return
+
+        peak = float(np.max(np.abs(self._field))) or 1.0
+        t = np.clip(self._field / peak, -1.0, 1.0)
+        pos = np.clip(t, 0.0, 1.0)[..., None]
+        neg = np.clip(-t, 0.0, 1.0)[..., None]
+        # dark mid, green chase, red flee
+        rgb = (
+            np.array([22, 24, 32], dtype=np.float32)
+            + pos * np.array([40, 200, 70], dtype=np.float32)
+            + neg * np.array([220, 40, 50], dtype=np.float32)
+        ).astype(np.uint8)
+        surf = self._pg.surfarray.make_surface(rgb)
+        try:
+            if self._texture is None:
+                self._texture = self._Texture.from_surface(self._renderer, surf)
+            else:
+                self._texture.update(surf)
+            self._texture.draw()
+            self._renderer.present()
+        except Exception:
+            self.visualize = False
