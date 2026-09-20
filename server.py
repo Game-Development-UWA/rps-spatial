@@ -1,5 +1,7 @@
 import colorsys
+import multiprocessing as mp
 import os
+import sys
 from concurrent.futures import ProcessPoolExecutor
 from heapq import nlargest
 from itertools import combinations
@@ -20,6 +22,11 @@ def generate_colours(n, saturation=0.75, value=0.85):
     ]
 
 
+def colour_text(text, rgb):
+    r, g, b = (int(c) for c in rgb[:3])
+    return f'\033[38;2;{r};{g};{b}m{text}\033[0m'
+
+
 def gather(swarms, indices):
     """One (N, 2) array of every unit in `indices`. Clients take a single enemy
     array, so the k prey (or k predators) are concatenated into one."""
@@ -30,24 +37,29 @@ def gather(swarms, indices):
     return parts[0] if len(parts) == 1 else np.concatenate(parts)
 
 
-def print_match(rows, population, title=None):
+def print_match(rows, population, title=None, colours=None):
     if title:
         print(title)
-    for row in rows:
+    if colours is None:
+        colours = generate_colours(len(rows))
+    for i, row in enumerate(rows):
         client_id = row['id'] if 'id' in row else int(row['swarm'])
-        print(
+        line = (
             f"  id {client_id} {population[client_id]}: "
             f"living={row['living']:.2f} "
             f"prey_surviving={row['prey_surviving']:.2f} "
             f"kills={row['kills']:.1f} "
             f"score={row['score']:.2f}"
         )
+        print(colour_text(line, colours[i]))
 
 
 def print_scores(population, scores, title='final scores'):
     print(title)
+    colours = generate_colours(len(population))
     for i, score in enumerate(scores):
-        print(f'  id {i} {population[i]}: score={score:.2f}')
+        line = f'  id {i} {population[i]}: score={score:.2f}'
+        print(colour_text(line, colours[i]))
 
 
 class Swarm:
@@ -217,6 +229,7 @@ class Game:
         print_match(
             results or self.metrics(),
             [swarm.client for swarm in self.swarms],
+            colours=[swarm.colour for swarm in self.swarms],
         )
 
 
@@ -242,8 +255,16 @@ class Tournament:
         if not jobs:
             return {'matches': [], 'scores': [0.0] * len(self.population)}
 
-        with ProcessPoolExecutor(max_workers=self.workers) as pool:
-            raw = list(pool.map(Tournament._play, jobs))
+        workers = max(1, min(self.workers, len(jobs)))
+        if workers == 1 or len(jobs) == 1:
+            raw = [Tournament._play(job) for job in jobs]
+        else:
+            # fork copies the already-imported numpy/scipy runtime; spawn
+            # would re-import in every worker and dominate small tournaments.
+            ctx = None if sys.platform == 'win32' else mp.get_context('fork')
+            with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
+                raw = list(pool.map(Tournament._play, jobs, chunksize=1))
+
 
         report, bags = [], [[] for _ in self.population]
         for i, match in enumerate(matches):
