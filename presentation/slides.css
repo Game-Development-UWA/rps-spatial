@@ -61,7 +61,7 @@ html, body {
   height: auto;
   padding: 1.1rem 1.25rem 1.2rem;
 }
-.slide:has(> .content):has(> .demo):not(.compare):not(.es-full) > .content {
+.slide:has(> .content):has(> .demo):not(.compare):not(.es-full):not(.geist-slide) > .content {
   min-height: 50vh;
 }
 .demo {
@@ -115,20 +115,40 @@ p { max-width: 34em; color: #ccc; }
   line-height: 1.45;
   max-width: 28em;
 }
+.geist-slide {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.7fr) minmax(0, 1fr);
+  align-items: center;
+  align-content: center;
+  padding: 8.5vh 6.5vw 8rem;
+  column-gap: 2.6vw;
+}
+.geist-slide > .content,
+.geist-slide > .demo,
+.geist-portrait {
+  height: 50vh;
+  min-height: 50vh;
+  max-height: 50vh;
+}
 .geist-slide > .content {
-  justify-content: flex-start;
+  justify-content: center;
   gap: 0.55rem;
-  padding: 1rem 1.15rem 1.15rem;
+  padding: 1.7rem 1.85rem 1.8rem;
+}
+.geist-slide .lede {
+  max-width: 38em;
 }
 .geist-portrait {
-  align-self: center;
   display: block;
-  width: auto;
-  max-width: 100%;
-  height: min(46vh, 22rem);
-  object-fit: contain;
-  border-radius: calc(var(--panel-radius) - 0.45rem);
-  margin-bottom: 0.35rem;
+  width: 100%;
+  object-fit: cover;
+  object-position: center top;
+  overflow: hidden;
+  background: var(--panel-fill);
+  border: 1px solid var(--panel-line);
+  border-radius: 1.45rem;
+}
+.geist-slide > .demo {
+  height: 50vh;
 }
 .geist-slide h1 {
   margin-bottom: 0.15em;
@@ -260,18 +280,31 @@ p { max-width: 34em; color: #ccc; }
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
+.has-up::before,
 .has-down::after {
   content: "";
   position: fixed;
   left: 50%;
-  bottom: 5.2rem;
   z-index: 2;
-  width: 0.55rem;
-  height: 0.55rem;
-  border-top: 2px solid rgba(238, 238, 238, 0.45);
-  border-right: 2px solid rgba(238, 238, 238, 0.45);
-  transform: translateX(-50%) rotate(-45deg);
+  width: 0.62rem;
+  height: 0.62rem;
+  border-top: 2px solid rgba(238, 238, 238, 0.72);
+  border-right: 2px solid rgba(238, 238, 238, 0.72);
   pointer-events: none;
+}
+.has-up::before {
+  top: 1.15rem;
+  transform: translateX(-50%) rotate(-45deg);
+  animation: hint-up 1.6s ease-in-out infinite;
+}
+.has-down::after {
+  bottom: 5.2rem;
+  transform: translateX(-50%) rotate(135deg);
+  opacity: 0.35;
+}
+@keyframes hint-up {
+  0%, 100% { translate: 0 0; opacity: 0.35; }
+  50% { translate: 0 -0.35rem; opacity: 0.95; }
 }
 .demo-panel {
   flex: 1;
@@ -395,8 +428,12 @@ p { max-width: 34em; color: #ccc; }
   border-radius: 99px;
   display: inline-block;
 }
-.slide:has(.demo):not(.compare) {
+.slide:has(.demo):not(.compare):not(.geist-slide) {
   align-content: center;
+}
+.geist-slide:has(.demo) {
+  align-content: center;
+  align-items: center;
 }
 .slide.es-full:has(.demo) {
   align-content: stretch;
@@ -518,21 +555,24 @@ p { max-width: 34em; color: #ccc; }
   font-size: 0.72rem;
   font-weight: 600;
   letter-spacing: 0.04em;
-  color: rgba(200, 200, 200, 0.55);
+  color: rgba(200, 200, 200, 0.28);
   pointer-events: none;
   user-select: none;
+}
+.slide.is-live .page-num {
+  color: rgba(230, 230, 230, 0.72);
 }
 .pager {
   position: fixed;
   left: 50%;
-  bottom: 1.35rem;
+  bottom: 1.05rem;
   z-index: 2;
   display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  padding: 0.52rem 0.78rem;
+  align-items: flex-end;
+  gap: 0.38rem;
+  padding: 0.42rem 0.62rem 0.38rem;
   transform: translateX(-50%);
-  border-radius: 999px;
+  border-radius: 0.7rem;
   background: var(--panel-fill);
   border: 1px solid var(--panel-line);
   backdrop-filter: blur(var(--panel-blur));
@@ -541,33 +581,29 @@ p { max-width: 34em; color: #ccc; }
 }
 .pager-group {
   display: flex;
+  flex-direction: column-reverse;
   align-items: center;
+  gap: 1px;
+  width: 14px;
+  opacity: 0.48;
+  transition: opacity 0.35s ease;
 }
-.pager-rule {
-  margin: 0 0.18rem;
-  color: #6a6a6a;
-  font-size: 0.78rem;
-  line-height: 1;
-  font-weight: 600;
+.pager-group.active {
+  opacity: 1;
 }
 .pager-dot {
-  position: relative;
   flex: 0 0 auto;
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
+  width: 14px;
+  height: 3px;
+  border-radius: 1px;
   background: #3a3a3a;
   box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
-    0 0 0 1px rgba(8, 8, 8, 0.85);
-  transition: width 0.4s ease, margin-left 0.4s ease, background 0.4s ease;
-}
-.pager-dot + .pager-dot {
-  margin-left: 0;
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 1px 0 rgba(0, 0, 0, 0.45);
+  transition: background 0.35s ease;
 }
 .pager-dot.current {
-  width: 22px;
-  background: #8a8a8a;
+  background: #fff;
 }
 .slide.es-full {
   display: flex;

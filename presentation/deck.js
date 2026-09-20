@@ -14,9 +14,6 @@ class Deck {
     this.slides = this.columns.flat();
     this.pager = document.querySelector(pagerSelector);
     this.config = config.transition || config;
-    this.pagerSpread = config.pager && config.pager.spread != null
-      ? config.pager.spread
-      : 8;
     this.field = field;
     this.col = 0;
     this.row = 0;
@@ -91,34 +88,18 @@ class Deck {
     if (!this.pager) return;
     this.pager.innerHTML = "";
     const ms = ((this.config.duration || 0.7) * 1000) + "ms";
-    this.dots = this.columns.map((slides, c) => {
-      if (c > 0) {
-        const rule = document.createElement("span");
-        rule.className = "pager-rule";
-        rule.setAttribute("aria-hidden", "true");
-        rule.textContent = "|";
-        this.pager.appendChild(rule);
-      }
+    this.dots = this.columns.map((slides) => {
       const group = document.createElement("span");
       group.className = "pager-group";
       this.pager.appendChild(group);
-      return slides.map(() => {
-        const dot = document.createElement("span");
-        dot.className = "pager-dot";
-        dot.style.transitionDuration = ms;
-        group.appendChild(dot);
-        return dot;
+      return slides.map((_, r) => {
+        const chip = document.createElement("span");
+        chip.className = "pager-dot";
+        chip.style.transitionDuration = ms;
+        chip.style.zIndex = String(r + 1);
+        group.appendChild(chip);
+        return chip;
       });
-    });
-  }
-
-  spaceDots(dots, open) {
-    const size = 10;
-    const spread = this.pagerSpread;
-    const stacked = Math.min(0, spread - size);
-    const gap = open ? spread : stacked;
-    dots.forEach((dot, r) => {
-      dot.style.marginLeft = r === 0 ? "0px" : gap + "px";
     });
   }
 
@@ -127,14 +108,14 @@ class Deck {
       this.dots.forEach((group, c) => {
         const host = group[0] && group[0].parentElement;
         if (host) host.classList.toggle("active", c === this.col);
-        this.spaceDots(group, c === this.col);
-        group.forEach((dot, r) => dot.classList.toggle("current", c === this.col && r === this.row));
+        group.forEach((dot, r) => {
+          dot.classList.toggle("current", c === this.col && r === this.row);
+        });
       });
     }
-    document.body.classList.toggle(
-      "has-down",
-      this.row < this.columns[this.col].length - 1
-    );
+    const last = this.columns[this.col].length - 1;
+    document.body.classList.toggle("has-up", this.row < last);
+    document.body.classList.toggle("has-down", this.row > 0);
   }
 
   targetsFor(col, row) {

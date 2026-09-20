@@ -45,11 +45,6 @@ const CONFIG = {
     blur: 4
   },
 
-  pager: {
-    // How far chips sit apart, in px. Used for the stacked peek and the open fan.
-    spread: 8
-  },
-
   transition: {
     duration: 0.4,
     // Higher = slower start / softer landing. 1 is linear on that half.
