@@ -47,7 +47,7 @@ class PeakSeekers {
     const x = w.xMin + Math.random() * (w.xMax - w.xMin);
     const y = w.yMin + Math.random() * (w.yMax - w.yMin);
     const p = this.field.toLandscape(x, y, seconds);
-    return { px: p.px, py: p.py, vx: 0, vy: 0 };
+    return { px: p.px, py: p.py, vx: 0, vy: 0, still: 0 };
   }
 
   landscapeBounds(seconds) {
@@ -75,6 +75,8 @@ class PeakSeekers {
     const maxSpeed = this.config.speed * scale;
     const follow = 1 - Math.pow(this.config.inertia, Math.max(dt, 1 / 120) * 60);
     const oct = this.config.climbOctaves;
+    const settle = this.config.settleSec == null ? 0.5 : this.config.settleSec;
+    const rest = maxSpeed * 0.04;
     for (const agent of this.agents) {
       const h = (px, py) => this.field.heightAtLandscape(px, py, oct);
       const gx = (h(agent.px + probe, agent.py) - h(agent.px - probe, agent.py)) / (2 * probe);
@@ -90,7 +92,10 @@ class PeakSeekers {
       const held = clamp(agent.px + agent.vx * dt, agent.py + agent.vy * dt);
       agent.px = held.px;
       agent.py = held.py;
+      const stopped = mag <= 1e-4 && Math.hypot(agent.vx, agent.vy) < rest;
+      agent.still = stopped ? agent.still + dt : 0;
     }
+    this.agents = this.agents.filter((agent) => agent.still < settle);
   }
 
   toScreen(px, py, seconds) {

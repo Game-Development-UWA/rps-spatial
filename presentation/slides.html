@@ -69,7 +69,7 @@
     </section>
     <section class="slide">
       <div class="content">
-        <h1>A ridge, not always the summit</h1>
+        <h1>Local vs Global Optima</h1>
         <p class="lede">Ascent stops when the slope is flat. Calculus already told you that landmark might be a local maximum.</p>
       </div>
       <div class="demo">
@@ -103,20 +103,22 @@
       <div class="content">
         <h1>Sampling</h1>
       </div>
-      <div class="compare-col">
-        <div class="content">
-          <h2>Hill Climb</h2>
+      <div class="compare-row">
+        <div class="compare-col">
+          <div class="content">
+            <h2>Hill Climb</h2>
+            <div class="demo">
+              <div class="demo-panel" data-demo="first-choice"></div>
+            </div>
+          </div>
         </div>
-        <div class="demo">
-          <div class="demo-panel" data-demo="first-choice"></div>
-        </div>
-      </div>
-      <div class="compare-col">
-        <div class="content">
-          <h2>Steepest Ascent Hill Climb</h2>
-        </div>
-        <div class="demo">
-          <div class="demo-panel" data-demo="steepest"></div>
+        <div class="compare-col">
+          <div class="content">
+            <h2>Steepest Ascent Hill Climb</h2>
+            <div class="demo">
+              <div class="demo-panel" data-demo="steepest"></div>
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -124,20 +126,22 @@
       <div class="content">
         <h1>Small (and sometimes big) Tweaks</h1>
       </div>
-      <div class="compare-col">
-        <div class="content">
-          <h2>Uniform Distribution</h2>
+      <div class="compare-row">
+        <div class="compare-col">
+          <div class="content">
+            <h2>Uniform Distribution</h2>
+            <div class="demo">
+              <div class="demo-panel" data-demo="tweak-uniform"></div>
+            </div>
+          </div>
         </div>
-        <div class="demo">
-          <div class="demo-panel" data-demo="tweak-uniform"></div>
-        </div>
-      </div>
-      <div class="compare-col">
-        <div class="content">
-          <h2>Gaussian Distribution</h2>
-        </div>
-        <div class="demo">
-          <div class="demo-panel" data-demo="tweak-gaussian"></div>
+        <div class="compare-col">
+          <div class="content">
+            <h2>Gaussian Distribution</h2>
+            <div class="demo">
+              <div class="demo-panel" data-demo="tweak-gaussian"></div>
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -152,26 +156,177 @@
     </section>
     <section class="slide compare">
       <div class="content">
-        <h1>I sacrificed everything for you to be here</h1>
+        <h1>Sacrifices</h1>
         <p class="lede">Accepting a worse neighbour is a way to escape local maxima.</p>
       </div>
-      <div class="compare-col">
-        <div class="content">
-          <h2>Simulated annealing</h2>
-          <p class="lede">"Sometimes accept a worse outcome".</p>
+      <div class="compare-row">
+        <div class="compare-col">
+          <div class="content">
+            <h2>Simulated annealing</h2>
+            <div class="demo">
+              <div class="demo-panel" data-demo="sa"></div>
+            </div>
+            <p class="lede">"Sometimes accept a worse outcome".</p>
+          </div>
         </div>
-        <div class="demo">
-          <div class="demo-panel" data-demo="sa"></div>
+        <div class="compare-col">
+          <div class="content">
+            <h2>Iterated local search</h2>
+            <div class="demo">
+              <div class="demo-panel" data-demo="ils"></div>
+            </div>
+            <p class="lede">"Stalled in life? Run away!"</p>
+          </div>
         </div>
       </div>
-      <div class="compare-col">
-        <div class="content">
-          <h2>Iterated local search</h2>
-          <p class="lede">"Stalled in life? Run away!"</p>
+    </section>
+  </section>
+  <section class="stack">
+    <section class="slide">
+      <div class="content">
+        <h1>Population methods</h1>
+        <p class="lede">One climber can stall on a ridge. Several packs can leave in different directions and close in on different peaks.</p>
+      </div>
+      <div class="demo">
+        <div class="demo-panel" data-demo="gwo"></div>
+      </div>
+    </section>
+    <section class="slide es-full">
+      <div class="content">
+        <h1>Evolutionary strategies (ES)</h1>
+        <p class="lede">A generalisation of hill climb</p>
+      </div>
+      <div class="demo">
+        <div class="demo-panel" data-demo="es"></div>
+      </div>
+    </section>
+    <section class="slide pipeline-slide">
+      <div class="demo">
+        <div class="demo-panel" data-demo="ga-es-compare"></div>
+      </div>
+    </section>
+    <section class="slide compare">
+      <div class="content">
+        <h1 class="ga-step-title">Selection</h1>
+        <div class="ga-pipeline-card ga-title-card" aria-hidden="true">
+          <strong>Genetic algorithm</strong>
+          <div class="ga-pipeline">
+            <span class="ga-stage">Assess</span>
+            <span class="ga-arrow">→</span>
+            <span class="ga-stage select active">Select</span>
+            <span class="ga-arrow">→</span>
+            <span class="ga-stage crossover">Crossover</span>
+            <span class="ga-arrow">→</span>
+            <span class="ga-stage mutate">Mutate</span>
+          </div>
         </div>
-        <div class="demo">
-          <div class="demo-panel" data-demo="ils"></div>
+      </div>
+      <div class="compare-row">
+        <div class="compare-col">
+          <div class="content">
+            <h2>Roulette wheel / SUS</h2>
+            <div class="demo">
+              <div class="demo-panel" data-demo="selection-roulette"></div>
+            </div>
+            <p class="lede">Eight independent spins, or one spin and evenly spaced pointers.</p>
+          </div>
         </div>
+        <div class="compare-col">
+          <div class="content">
+            <h2>Tournament selection</h2>
+            <div class="demo">
+              <div class="demo-panel" data-demo="selection-tournament"></div>
+            </div>
+            <p class="lede">Pick two, keep the fitter. Repeat until eight.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section class="slide compare">
+      <div class="content">
+        <h1 class="ga-step-title">Crossover</h1>
+        <div class="ga-pipeline-card ga-title-card" aria-hidden="true">
+          <strong>Genetic algorithm</strong>
+          <div class="ga-pipeline">
+            <span class="ga-stage">Assess</span>
+            <span class="ga-arrow">→</span>
+            <span class="ga-stage select">Select</span>
+            <span class="ga-arrow">→</span>
+            <span class="ga-stage crossover active">Crossover</span>
+            <span class="ga-arrow">→</span>
+            <span class="ga-stage mutate">Mutate</span>
+          </div>
+        </div>
+      </div>
+      <div class="compare-row">
+        <div class="compare-col">
+          <div class="content">
+            <h2>Discrete genomes</h2>
+            <div class="demo">
+              <div class="demo-panel" data-demo="crossover-discrete"></div>
+            </div>
+            <p class="lede">One cut, two cuts, or a per-bit swap mask.</p>
+          </div>
+        </div>
+        <div class="compare-col">
+          <div class="content">
+            <h2>Linear combination</h2>
+            <div class="demo">
+              <div class="demo-panel" data-demo="crossover-linear"></div>
+            </div>
+            <p class="lede">Blend two 2D parents: \(\alpha A + (1-\alpha)B\). Outside the segment, \(\alpha\) extrapolates.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section class="slide compare">
+      <div class="content">
+        <h1 class="ga-step-title">Mutation</h1>
+        <div class="ga-pipeline-card ga-title-card" aria-hidden="true">
+          <strong>Genetic algorithm</strong>
+          <div class="ga-pipeline">
+            <span class="ga-stage">Assess</span>
+            <span class="ga-arrow">→</span>
+            <span class="ga-stage select">Select</span>
+            <span class="ga-arrow">→</span>
+            <span class="ga-stage crossover">Crossover</span>
+            <span class="ga-arrow">→</span>
+            <span class="ga-stage mutate active">Mutate</span>
+          </div>
+        </div>
+      </div>
+      <div class="compare-row">
+        <div class="compare-col">
+          <div class="content">
+            <h2>Gaussian mutation</h2>
+            <div class="demo">
+              <div class="demo-panel" data-demo="mutation-gaussian"></div>
+            </div>
+            <p class="lede">Nudge a real number by a Gaussian step of width \(\sigma^2\).</p>
+          </div>
+        </div>
+        <div class="compare-col">
+          <div class="content">
+            <h2>Expression-tree mutation</h2>
+            <div class="demo">
+              <div class="demo-panel" data-demo="mutation-tree"></div>
+            </div>
+            <p class="lede">Step adds, drops, or rewrites a leaf. The expression at the bottom is the tree.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </section>
+  <section class="stack">
+    <section class="slide geist-slide">
+      <div class="content">
+        <img class="geist-portrait" src="hegel.jpg" alt="Georg Wilhelm Friedrich Hegel, painted by Jakob Schlesinger in 1831">
+        <h1>Cultural Transformation as Dialectic Geist</h1>
+        <h2>Hegel, <em>Phenomenology of Spirit</em></h2>
+        <p class="lede">The human spirit, memetic diversity, love, and the search for the global optimum (which may or may not exist).</p>
+      </div>
+      <div class="demo">
+        <div class="demo-panel" data-demo="geist"></div>
       </div>
     </section>
   </section>
@@ -181,6 +336,7 @@
   <script src="config.js"></script>
   <script src="noise.js"></script>
   <script src="contours.js"></script>
+  <script src="landscape.js"></script>
   <script src="field.js"></script>
   <script src="agents.js"></script>
   <script src="plots.js"></script>

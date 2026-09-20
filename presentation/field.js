@@ -1,7 +1,7 @@
 class TerrainField {
   constructor(canvas, config) {
     this.canvas = canvas;
-    this.ctx = canvas.getContext("2d");
+    this.ctx = canvas.getContext("2d", { alpha: false, desynchronized: true }) || canvas.getContext("2d");
     this.config = config;
     this.noise = new Perlin(config.seed);
     this.cols = 0;
@@ -9,65 +9,143 @@ class TerrainField {
     this.nx = 0;
     this.cssW = 0;
     this.cssH = 0;
-    this.z = null;
     this.overlapPx = 0;
     this.overlapDev = 0;
     this.tileCssW = 0;
     this.screenPxW = 0;
     this.screenPxH = 0;
     this.tiles = new Map();
-    this.pool = [];
     this.panBiasWorld = 0;
     this.hintBias = 0;
+    this.slideCount = 1;
+    this.panPush = 0.8;
+    this.generation = 0;
+    this.queued = new Set();
+    this.inflight = null;
+    this.worker = null;
+    this.shadeLut = [];
+    this.zScratch = null;
+    this.raf = 0;
+    this.lastTick = 0;
+    this.bootWorker();
+  }
+
+  bootWorker() {
+    if (typeof Worker === "undefined" || typeof OffscreenCanvas === "undefined") return;
+    try {
+      this.worker = new Worker("field-worker.js");
+      this.worker.onmessage = (e) => this.onWorker(e.data);
+      this.worker.onerror = () => this.dropWorker();
+    } catch (err) {
+      this.worker = null;
+    }
+  }
+
+  dropWorker() {
+    if (this.worker) {
+      this.worker.terminate();
+      this.worker = null;
+    }
+    if (this.inflight != null) {
+      this.queued.add(this.inflight);
+      this.inflight = null;
+    }
+  }
+
+  attachDeck(deck) {
+    this.slideCount = deck.columns.length;
+    this.panPush = deck.config.panPush != null ? deck.config.panPush : 0.8;
   }
 
   start() {
     this.resize();
     window.addEventListener("resize", () => this.resize());
-    let last = 0;
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) this.disarm();
+      else this.arm();
+    });
+    if (!document.hidden) this.arm();
+  }
+
+  disarm() {
+    if (this.raf) cancelAnimationFrame(this.raf);
+    this.raf = 0;
+    this.lastTick = 0;
+  }
+
+  arm() {
+    if (this.raf || document.hidden) return;
     const tick = (now) => {
+      this.raf = requestAnimationFrame(tick);
+      const maxFps = this.config.maxFps == null ? 30 : this.config.maxFps;
+      if (maxFps > 0 && this.lastTick && now - this.lastTick < 1000 / maxFps) return;
       const seconds = now / 1000;
-      const dt = last ? Math.min(0.05, seconds - last) : 0;
-      last = seconds;
+      const dt = this.lastTick ? Math.min(0.05, (now - this.lastTick) / 1000) : 0;
+      this.lastTick = now;
       if (this.beforeDraw) this.beforeDraw(seconds, dt);
       this.draw(seconds);
       if (this.afterDraw) this.afterDraw(seconds, dt);
-      requestAnimationFrame(tick);
     };
-    requestAnimationFrame(tick);
+    this.raf = requestAnimationFrame(tick);
+  }
+
+  layoutPayload() {
+    return {
+      cols: this.cols,
+      rows: this.rows,
+      nx: this.nx,
+      cssW: this.cssW,
+      cssH: this.cssH,
+      tileCssW: this.tileCssW,
+      overlapPx: this.overlapPx,
+      pixelW: this.screenPxW + 2 * this.overlapDev,
+      pixelH: this.screenPxH
+    };
   }
 
   resize() {
     const { canvas, ctx, config } = this;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
     const host = canvas.parentElement;
-    this.cssW = host ? host.clientWidth : window.innerWidth;
-    this.cssH = host ? host.clientHeight : window.innerHeight;
-    canvas.width = Math.round(this.cssW * dpr);
-    canvas.height = Math.round(this.cssH * dpr);
-    canvas.style.width = this.cssW + "px";
-    canvas.style.height = this.cssH + "px";
+    const cssW = host ? host.clientWidth : window.innerWidth;
+    const cssH = host ? host.clientHeight : window.innerHeight;
+    const w = Math.round(cssW * dpr);
+    const h = Math.round(cssH * dpr);
+    if (w === canvas.width && h === canvas.height && this.cols) return;
+    this.cssW = cssW;
+    this.cssH = cssH;
+    canvas.width = w;
+    canvas.height = h;
+    canvas.style.width = cssW + "px";
+    canvas.style.height = cssH + "px";
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.screenPxW = canvas.width;
     this.screenPxH = canvas.height;
-    this.overlapDev = Math.round(Math.max(config.cellPx * 4, 40) * (canvas.width / this.cssW));
-    this.overlapPx = this.overlapDev / (this.screenPxW / this.cssW);
+    this.overlapDev = Math.round(Math.max(config.cellPx * 2, 24) * dpr);
+    this.overlapPx = this.overlapDev / dpr;
     this.tileCssW = this.cssW + 2 * this.overlapPx;
-    this.cols = Math.max(64, Math.round(this.tileCssW / config.cellPx));
-    this.rows = Math.max(44, Math.round(this.cssH / config.cellPx));
+    this.cols = Math.min(120, Math.max(48, Math.round(this.tileCssW / config.cellPx)));
+    this.rows = Math.min(80, Math.max(32, Math.round(this.cssH / config.cellPx)));
     this.nx = this.cols + 1;
-    this.z = new Float32Array(this.nx * (this.rows + 1));
+    this.zScratch = new Float32Array(this.nx * (this.rows + 1));
+    this.tiles.forEach((tile) => this.disposeTile(tile));
     this.tiles.clear();
-    this.pool.length = 0;
+    this.queued.clear();
+    this.inflight = null;
+    this.generation += 1;
+    this.shadeLut = [];
+    if (this.worker) {
+      this.worker.postMessage({
+        type: "setup",
+        generation: this.generation,
+        config: this.config,
+        layout: this.layoutPayload()
+      });
+    }
   }
 
   heightAtLandscape(px, py, octaves) {
-    const c = this.config;
-    const n = this.noise;
-    const oct = octaves == null ? c.octaves : octaves;
-    const wx = px + c.warp * n.fbm(px + 3.1, py, Math.min(3, oct), c.persistence);
-    const wy = py + c.warp * n.fbm(px + 17.7, py + 8.2, Math.min(3, oct), c.persistence);
-    return n.fbm(wx, wy, oct, c.persistence);
+    return landscapeHeight(this.noise, this.config, px, py, octaves);
   }
 
   toLandscape(x, y, seconds) {
@@ -91,142 +169,8 @@ class TerrainField {
     return this.heightAtLandscape(p.px, p.py, octaves);
   }
 
-  heightAtOrigin(x, y) {
-    const c = this.config;
-    return this.heightAtLandscape(x * c.worldScale, y * c.worldScale);
-  }
-
   vis() {
     return this.config.xMax - this.config.xMin;
-  }
-
-  tileWorldRange(index) {
-    const c = this.config;
-    const vis = this.vis();
-    const overlapWorld = (this.overlapPx / this.cssW) * vis;
-    return {
-      x0: c.xMin + index * vis - overlapWorld,
-      x1: c.xMin + (index + 1) * vis + overlapWorld,
-      y0: c.yMin,
-      y1: c.yMax
-    };
-  }
-
-  sampleTile(index) {
-    const { cols, rows, nx } = this;
-    const r = this.tileWorldRange(index);
-    for (let j = 0; j <= rows; j++) {
-      const y = r.y0 + (r.y1 - r.y0) * (j / rows);
-      for (let i = 0; i <= cols; i++) {
-        const x = r.x0 + (r.x1 - r.x0) * (i / cols);
-        this.z[j * nx + i] = this.heightAtOrigin(x, y);
-      }
-    }
-  }
-
-  shade(t) {
-    const g = Math.round(this.config.background + this.config.lineMin + t * this.config.lineRange);
-    return `rgb(${g},${g},${g})`;
-  }
-
-  splineTo(ctx, pts, closed) {
-    const n = pts.length;
-    if (n < 2) return;
-    if (n === 2) {
-      ctx.moveTo(pts[0][0], pts[0][1]);
-      ctx.lineTo(pts[1][0], pts[1][1]);
-      return;
-    }
-    const at = (k) => {
-      if (closed) return pts[(k + n) % n];
-      if (k < 0) return pts[0];
-      if (k >= n) return pts[n - 1];
-      return pts[k];
-    };
-    ctx.moveTo(pts[0][0], pts[0][1]);
-    const steps = closed ? n : n - 1;
-    for (let k = 0; k < steps; k++) {
-      const p0 = at(k - 1), p1 = at(k), p2 = at(k + 1), p3 = at(k + 2);
-      ctx.bezierCurveTo(
-        p1[0] + (p2[0] - p0[0]) / 6,
-        p1[1] + (p2[1] - p0[1]) / 6,
-        p2[0] - (p3[0] - p1[0]) / 6,
-        p2[1] - (p3[1] - p1[1]) / 6,
-        p2[0], p2[1]
-      );
-    }
-  }
-
-  acquireCanvas() {
-    const dpr = this.canvas.width / this.cssW;
-    const canvas = this.pool.pop() || document.createElement("canvas");
-    canvas.width = this.screenPxW + 2 * this.overlapDev;
-    canvas.height = this.screenPxH;
-    return canvas;
-  }
-
-  releaseTile(index) {
-    const tile = this.tiles.get(index);
-    if (!tile) return;
-    this.tiles.delete(index);
-    this.pool.push(tile.canvas);
-  }
-
-  bakeTile(index) {
-    const canvas = this.acquireCanvas();
-    const ctx = canvas.getContext("2d");
-    const { config: c, cols, rows, nx, cssH, tileCssW: w } = this;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    const dpr = canvas.width / w;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = `rgb(${c.background},${c.background},${c.background})`;
-    ctx.fillRect(0, 0, w, cssH);
-    this.sampleTile(index);
-
-    const cellW = w / cols;
-    const cellH = cssH / rows;
-    const depth = c.bandDepth || 0;
-    if (depth > 0) {
-      const span = c.zMax - c.zMin || 1;
-      for (let j = 0; j < rows; j++) {
-        for (let i = 0; i < cols; i++) {
-          const avg = (
-            this.z[j * nx + i] +
-            this.z[j * nx + i + 1] +
-            this.z[(j + 1) * nx + i] +
-            this.z[(j + 1) * nx + i + 1]
-          ) * 0.25;
-          let t = (avg - c.zMin) / span;
-          t = Math.max(0, Math.min(1, t));
-          t = Math.floor(t * c.levels) / c.levels;
-          const g = Math.max(0, c.background - Math.round((1 - t) * depth));
-          ctx.fillStyle = `rgb(${g},${g},${g})`;
-          ctx.fillRect(i * cellW, j * cellH, cellW + 0.6, cellH + 0.6);
-        }
-      }
-    }
-
-    ctx.lineWidth = c.lineWidth;
-    ctx.lineJoin = "round";
-    ctx.lineCap = "round";
-
-    for (let L = 0; L < c.levels; L++) {
-      const u = L / (c.levels - 1);
-      const level = c.zMin + (c.zMax - c.zMin) * (0.08 + 0.84 * u);
-      const { open, closed } = Contours.paths(this.z, cols, rows, nx, level, cellW, cellH);
-      ctx.strokeStyle = this.shade(u);
-      ctx.beginPath();
-      for (const pts of open) {
-        if (pts.length >= c.minOpenPoints) this.splineTo(ctx, pts, false);
-      }
-      for (const pts of closed) {
-        if (pts.length >= c.minClosedPoints) this.splineTo(ctx, pts, true);
-      }
-      ctx.stroke();
-    }
-
-    this.tiles.set(index, { canvas });
   }
 
   panOffset(seconds) {
@@ -243,6 +187,17 @@ class TerrainField {
     this.hintBias = world;
   }
 
+  stripRange(seconds) {
+    const vis = this.vis();
+    const time = (seconds * this.config.panSpeed) / this.config.worldScale;
+    const n = Math.max(1, this.slideCount);
+    const hiBias = (n - 1) * this.panPush * vis;
+    const lo = Math.floor(time / vis);
+    const hi = Math.floor((time + hiBias) / vis + 1 - 1e-6);
+    const shown = this.visibleTiles(this.panOffset(seconds));
+    return { lo: Math.min(lo, shown.first), hi: Math.max(hi, shown.last) };
+  }
+
   visibleTiles(shift) {
     const w = this.cssW;
     const first = Math.floor(shift / w);
@@ -250,52 +205,98 @@ class TerrainField {
     return { first, last };
   }
 
-  desiredTiles(first, last, seconds) {
-    const ahead = this.config.prefetchAhead || 4;
-    const behind = this.config.prefetchBehind ?? 1;
-    let lo = first - behind;
-    let hi = last + ahead;
-    const hintShift =
-      (seconds * this.config.panSpeed) / this.config.worldScale + this.hintBias;
-    const hint = Math.floor(hintShift / this.vis());
-    lo = Math.min(lo, hint - behind);
-    hi = Math.max(hi, hint + ahead);
-    const want = [];
-    for (let i = lo; i <= hi; i++) want.push(i);
-    return want;
+  disposeTile(tile) {
+    if (tile && tile.bitmap && tile.bitmap.close) tile.bitmap.close();
   }
 
-  evict(keep, first, last) {
-    const maxTiles = this.config.maxTiles || keep.length + 2;
-    if (this.tiles.size <= maxTiles) return;
-    const keepSet = new Set(keep);
-    const extra = [...this.tiles.keys()].filter((k) => {
-      if (k >= first && k <= last) return false;
-      return !keepSet.has(k);
+  releaseTile(index) {
+    const tile = this.tiles.get(index);
+    if (!tile) return;
+    this.tiles.delete(index);
+    this.disposeTile(tile);
+  }
+
+  onWorker(msg) {
+    if (msg.type !== "tile") return;
+    if (msg.generation !== this.generation) {
+      if (msg.bitmap && msg.bitmap.close) msg.bitmap.close();
+      return;
+    }
+    const prev = this.tiles.get(msg.index);
+    if (prev) this.disposeTile(prev);
+    this.tiles.set(msg.index, { bitmap: msg.bitmap });
+    if (this.inflight === msg.index) this.inflight = null;
+    this.queued.delete(msg.index);
+    this.kickBake();
+  }
+
+  requestTile(index) {
+    if (this.tiles.has(index) || this.queued.has(index) || this.inflight === index) return;
+    this.queued.add(index);
+  }
+
+  kickBake() {
+    if (this.inflight != null || !this.queued.size) return;
+    let best = null;
+    let bestDist = Infinity;
+    const vis = this.visibleTiles(this.panOffset(performance.now() / 1000));
+    const mid = (vis.first + vis.last) / 2;
+    this.queued.forEach((i) => {
+      const d = Math.abs(i - mid);
+      if (d < bestDist) {
+        bestDist = d;
+        best = i;
+      }
     });
-    extra.sort((a, b) => {
-      const mid = (keep[0] + keep[keep.length - 1]) / 2;
-      return Math.abs(b - mid) - Math.abs(a - mid);
+    this.queued.delete(best);
+    this.inflight = best;
+    if (this.worker) {
+      this.worker.postMessage({ type: "bake", index: best, generation: this.generation });
+      return;
+    }
+    this.bakeLocal(best);
+  }
+
+  bakeLocal(index) {
+    const L = this.layoutPayload();
+    const canvas = document.createElement("canvas");
+    canvas.width = L.pixelW;
+    canvas.height = L.pixelH;
+    const ctx = canvas.getContext("2d", { alpha: false }) || canvas.getContext("2d");
+    bakeLandscapeTile(ctx, {
+      config: this.config,
+      cols: L.cols,
+      rows: L.rows,
+      nx: L.nx,
+      cssW: L.cssW,
+      cssH: L.cssH,
+      tileCssW: L.tileCssW,
+      pixelW: L.pixelW,
+      pixelH: L.pixelH,
+      overlapPx: L.overlapPx,
+      index,
+      noise: this.noise,
+      z: this.zScratch,
+      shadeLut: this.shadeLut
     });
-    while (this.tiles.size > maxTiles && extra.length) this.releaseTile(extra.shift());
+    const prev = this.tiles.get(index);
+    if (prev) this.disposeTile(prev);
+    this.tiles.set(index, { bitmap: canvas });
+    this.inflight = null;
   }
 
   ensureTiles(seconds) {
     const shift = this.panOffset(seconds);
     const { first, last } = this.visibleTiles(shift);
-    const want = this.desiredTiles(first, last, seconds);
-    for (let i = first; i <= last; i++) {
-      if (!this.tiles.has(i)) this.bakeTile(i);
-    }
-    const budget = this.config.bakeBudgetMs || 8;
-    const t0 = performance.now();
-    const missing = want.filter((i) => !this.tiles.has(i));
-    missing.sort((a, b) => Math.abs(a - first) - Math.abs(b - first));
-    for (const i of missing) {
-      if (performance.now() - t0 >= budget) break;
-      this.bakeTile(i);
-    }
-    this.evict(want, first, last);
+    const strip = this.stripRange(seconds);
+    for (let i = strip.lo; i <= strip.hi; i++) this.requestTile(i);
+    this.tiles.forEach((_, i) => {
+      if (i < strip.lo || i > strip.hi) this.releaseTile(i);
+    });
+    this.queued.forEach((i) => {
+      if (i < strip.lo || i > strip.hi) this.queued.delete(i);
+    });
+    this.kickBake();
     return { shift, first, last };
   }
 
@@ -305,14 +306,14 @@ class TerrainField {
     const dpr = this.canvas.width / this.cssW;
     const c = this.config;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = `rgb(${c.background},${c.background},${c.background})`;
+    ctx.fillStyle = "rgb(" + c.background + "," + c.background + "," + c.background + ")";
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     const origin = Math.round(-shift * dpr);
     for (let i = first; i <= last; i++) {
       const tile = this.tiles.get(i);
-      if (!tile) continue;
+      if (!tile || !tile.bitmap) continue;
       ctx.drawImage(
-        tile.canvas,
+        tile.bitmap,
         overlapDev, 0, screenPxW, screenPxH,
         origin + i * screenPxW, 0, screenPxW, screenPxH
       );

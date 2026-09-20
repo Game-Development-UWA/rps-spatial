@@ -4,9 +4,9 @@ const CONFIG = {
     background: 31,
     bandDepth: 20,
     lineMin: 10,
-    lineRange: 100,
-    lineWidth: 1.15,
-    levels: 22,
+    lineRange: 40,
+    lineWidth: 1.1,
+    levels: 14,
     zMin: -0.55,
     zMax: 0.58,
 
@@ -23,21 +23,26 @@ const CONFIG = {
 
     // Landscape drift (noise-space units per second). Contours slide as tiles.
     panSpeed: 0.01,
-    // Screens of contour tiles kept ready ahead of / behind the camera.
-    prefetchAhead: 4,
-    prefetchBehind: 1,
-    maxTiles: 10,
-    // Milliseconds of extra bake work per frame after the visible tiles exist.
-    bakeBudgetMs: 8,
+    // Cap the field loop. 0 = uncapped (display refresh).
+    maxFps: 30,
 
-    cellPx: 10,
+    cellPx: 16,
     minOpenPoints: 4,
     minClosedPoints: 8
   },
 
+  demo: {
+    // Height-mapped colours for plots, low → high. Mix red, green, and blue.
+    palette: ["#2a62c8", "#2f9d62", "#d43c3c"],
+    // Colour-field cell size in CSS pixels. Smaller = sharper bands.
+    cellPx: 7
+  },
+
   panel: {
+    // Text / demo card fill. "transparent" or any CSS colour.
+    background: "rgba(10, 10, 10, 0.00)",
     // Backdrop blur on content and demo cards, in px.
-    blur: 3
+    blur: 4
   },
 
   pager: {

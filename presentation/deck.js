@@ -23,6 +23,7 @@ class Deck {
     this.motion = null;
     this.pos = this.slides.map(() => ({ x: 100, y: 0 }));
     this.bias0Index = 0;
+    this.labelSlides();
     this.buildPager();
     this.bind();
     this.parkAll();
@@ -33,17 +34,18 @@ class Deck {
 
   bind() {
     document.addEventListener("keydown", (e) => {
-      if (e.key === " " && e.target && e.target.closest && e.target.closest("button, input, textarea")) return;
-      if (e.key === "ArrowDown") {
+      if (e.target && e.target.closest && e.target.closest("button, input, textarea")) return;
+      const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      if (key === "ArrowUp" || key === "w") {
         e.preventDefault();
         this.goRow(this.row + 1);
-      } else if (e.key === "ArrowUp") {
+      } else if (key === "ArrowDown" || key === "s") {
         e.preventDefault();
         this.goRow(this.row - 1);
-      } else if (e.key === "ArrowRight" || e.key === " ") {
+      } else if (key === "ArrowRight" || key === " " || key === "d") {
         e.preventDefault();
         this.goCol(this.col + 1);
-      } else if (e.key === "ArrowLeft") {
+      } else if (key === "ArrowLeft" || key === "a") {
         e.preventDefault();
         this.goCol(this.col - 1);
       } else if (e.key === "Home") {
@@ -53,6 +55,27 @@ class Deck {
         e.preventDefault();
         this.go(this.columns.length - 1, 0);
       }
+    });
+  }
+
+  pageLabel(col, row) {
+    const n = col + 1;
+    if (this.columns[col].length === 1) return String(n);
+    return n + "." + (row + 1);
+  }
+
+  labelSlides() {
+    this.columns.forEach((slides, c) => {
+      slides.forEach((slide, r) => {
+        let mark = slide.querySelector(".page-num");
+        if (!mark) {
+          mark = document.createElement("span");
+          mark.className = "page-num";
+          mark.setAttribute("aria-hidden", "true");
+          slide.appendChild(mark);
+        }
+        mark.textContent = this.pageLabel(c, r);
+      });
     });
   }
 
@@ -121,7 +144,7 @@ class Deck {
         if (c < col) targets.push({ x: -100, y: 0 });
         else if (c > col) targets.push({ x: 100, y: 0 });
         else if (r === row) targets.push({ x: 0, y: 0 });
-        else targets.push({ x: 0, y: r < row ? -100 : 100 });
+        else targets.push({ x: 0, y: r < row ? 100 : -100 });
       });
     });
     return targets;
@@ -139,6 +162,7 @@ class Deck {
   }
 
   go(col, row) {
+    if (this.motion) return;
     if (col === this.col && row === this.row) return;
     const vis = this.field.config.xMax - this.field.config.xMin;
     const startPos = this.pos.map((p) => ({ x: p.x, y: p.y }));
@@ -166,9 +190,28 @@ class Deck {
     };
     this.col = col;
     this.row = row;
+    this.pendingSlide = this.columns[col][row];
     this.field.hintPanBias(this.motion.bias1);
     this.updatePager();
-    if (this.onNavigate) this.onNavigate(this.columns[col][row]);
+    this.syncLive();
+  }
+
+  settle() {
+    const slide = this.pendingSlide || this.columns[this.col][this.row];
+    this.pendingSlide = null;
+    if (this.onNavigate) this.onNavigate(slide);
+  }
+
+  syncLive() {
+    this.slides.forEach((slide, i) => {
+      const a = this.motion ? this.motion.startPos[i] : this.pos[i];
+      const b = this.motion ? this.motion.targetPos[i] : this.pos[i];
+      const vis = (p) => Math.abs(p.x) < 50 && Math.abs(p.y) < 50;
+      const live = vis(a) || vis(b);
+      slide.classList.toggle("is-live", live);
+      slide.classList.toggle("is-moving", !!this.motion && live);
+      slide.hidden = !live;
+    });
   }
 
   tick() {
@@ -191,6 +234,8 @@ class Deck {
       for (let i = 0; i < this.slides.length; i++) this.place(this.slides[i], this.pos[i].x, this.pos[i].y);
       this.field.setPanBias(bias1);
       this.motion = null;
+      this.syncLive();
+      this.settle();
     }
   }
 }
@@ -205,10 +250,15 @@ document.addEventListener("DOMContentLoaded", () => {
       throwOnError: false
     });
   }
-  const panelBlur = CONFIG.panel && CONFIG.panel.blur != null ? CONFIG.panel.blur : 18;
+  const panel = CONFIG.panel || {};
+  const panelBlur = panel.blur != null ? panel.blur : 18;
   document.documentElement.style.setProperty("--panel-blur", panelBlur + "px");
+  if (panel.background != null) {
+    document.documentElement.style.setProperty("--panel-fill", panel.background);
+  }
   const field = new TerrainField(document.getElementById("field"), CONFIG.field);
   const deck = new Deck(".stack", "#pager", CONFIG, field);
+  field.attachDeck(deck);
   const seekers = new PeakSeekers(field, CONFIG.agents);
   const calcPanel = document.getElementById("calc-panel");
   const calcReadout = document.getElementById("calc-readout");
@@ -224,4 +274,5 @@ document.addEventListener("DOMContentLoaded", () => {
     demos.tick(dt);
   };
   field.start();
+  deck.syncLive();
 });

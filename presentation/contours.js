@@ -6,14 +6,23 @@ const Contours = {
     const H = (i, j) => j * cols + i;
     const V = (i, j) => hCount + j * nx + i;
     const lerp = (a, b, va, vb) => a + ((level - va) / (vb - va || 1e-9)) * (b - a);
+    const key = (a, b) => (a < b ? a * 1048576 + b : b * 1048576 + a);
 
     const link = (a, b, pa, pb) => {
       pos.set(a, pa);
       pos.set(b, pb);
-      if (!adj.has(a)) adj.set(a, []);
-      if (!adj.has(b)) adj.set(b, []);
-      adj.get(a).push(b);
-      adj.get(b).push(a);
+      let la = adj.get(a);
+      if (!la) {
+        la = [];
+        adj.set(a, la);
+      }
+      let lb = adj.get(b);
+      if (!lb) {
+        lb = [];
+        adj.set(b, lb);
+      }
+      la.push(b);
+      lb.push(a);
     };
 
     for (let j = 0; j < rows; j++) {
@@ -36,14 +45,6 @@ const Contours = {
         const top = [lerp(xA, xB, v01, v11), yB];
         const left = [xA, lerp(yA, yB, v00, v01)];
         const eB = H(i, j), eR = V(i + 1, j), eT = H(i, j + 1), eL = V(i, j);
-        const pairs = {
-          1: [eL, eB, left, bottom], 2: [eB, eR, bottom, right],
-          3: [eL, eR, left, right], 4: [eR, eT, right, top],
-          6: [eB, eT, bottom, top], 7: [eL, eT, left, top],
-          8: [eT, eL, top, left], 9: [eB, eT, bottom, top],
-          11: [eR, eT, right, top], 12: [eL, eR, left, right],
-          13: [eB, eR, bottom, right], 14: [eL, eB, left, bottom]
-        };
 
         if (idx === 5 || idx === 10) {
           const mid = (v00 + v10 + v11 + v01) * 0.25 >= level;
@@ -54,30 +55,36 @@ const Contours = {
             link(eL, eT, left, top);
             link(eB, eR, bottom, right);
           }
-        } else {
-          const p = pairs[idx];
-          link(p[0], p[1], p[2], p[3]);
+          continue;
         }
+
+        if (idx === 1 || idx === 14) link(eL, eB, left, bottom);
+        else if (idx === 2 || idx === 13) link(eB, eR, bottom, right);
+        else if (idx === 3 || idx === 12) link(eL, eR, left, right);
+        else if (idx === 4 || idx === 11) link(eR, eT, right, top);
+        else if (idx === 6 || idx === 9) link(eB, eT, bottom, top);
+        else if (idx === 7 || idx === 8) link(eL, eT, left, top);
       }
     }
 
     const used = new Set();
-    const eid = (a, b) => (a < b ? a + ":" + b : b + ":" + a);
     const walk = (start, first) => {
       const nodes = [start];
       let prev = start, cur = first;
-      used.add(eid(start, first));
+      used.add(key(start, first));
       while (cur !== start) {
         nodes.push(cur);
+        const nbrs = adj.get(cur);
         let next = null;
-        for (const k of adj.get(cur)) {
-          if (k !== prev && !used.has(eid(cur, k))) {
+        for (let n = 0; n < nbrs.length; n++) {
+          const k = nbrs[n];
+          if (k !== prev && !used.has(key(cur, k))) {
             next = k;
             break;
           }
         }
         if (next == null) return { nodes, closed: false };
-        used.add(eid(cur, next));
+        used.add(key(cur, next));
         prev = cur;
         cur = next;
       }
@@ -87,18 +94,88 @@ const Contours = {
     const open = [];
     const closed = [];
     for (const start of adj.keys()) {
-      if ((adj.get(start) || []).length !== 1) continue;
-      const n0 = adj.get(start)[0];
-      if (used.has(eid(start, n0))) continue;
+      const nbrs = adj.get(start);
+      if (nbrs.length !== 1) continue;
+      const n0 = nbrs[0];
+      if (used.has(key(start, n0))) continue;
       open.push(walk(start, n0).nodes.map((id) => pos.get(id)));
     }
     for (const start of adj.keys()) {
-      for (const n0 of adj.get(start)) {
-        if (used.has(eid(start, n0))) continue;
-        const traced = walk(start, n0);
-        closed.push(traced.nodes.map((id) => pos.get(id)));
+      const nbrs = adj.get(start);
+      for (let n = 0; n < nbrs.length; n++) {
+        const n0 = nbrs[n];
+        if (used.has(key(start, n0))) continue;
+        closed.push(walk(start, n0).nodes.map((id) => pos.get(id)));
       }
     }
     return { open, closed };
+  },
+
+  addAbove(ctx, z, cols, rows, nx, level, cellW, cellH, ox, oy) {
+    ox = ox || 0;
+    oy = oy || 0;
+    const lerp = (a, b, va, vb) => a + ((level - va) / (vb - va || 1e-9)) * (b - a);
+    const emit = (pts) => {
+      ctx.moveTo(ox + pts[0][0], oy + pts[0][1]);
+      for (let k = 1; k < pts.length; k++) ctx.lineTo(ox + pts[k][0], oy + pts[k][1]);
+      ctx.closePath();
+    };
+
+    for (let j = 0; j < rows; j++) {
+      for (let i = 0; i < cols; i++) {
+        const v00 = z[j * nx + i];
+        const v10 = z[j * nx + i + 1];
+        const v01 = z[(j + 1) * nx + i];
+        const v11 = z[(j + 1) * nx + i + 1];
+        const idx =
+          ((v00 >= level) << 0) |
+          ((v10 >= level) << 1) |
+          ((v11 >= level) << 2) |
+          ((v01 >= level) << 3);
+        if (idx === 0) continue;
+
+        const xA = i * cellW, xB = (i + 1) * cellW;
+        const yA = j * cellH, yB = (j + 1) * cellH;
+        if (idx === 15) {
+          emit([[xA, yA], [xB, yA], [xB, yB], [xA, yB]]);
+          continue;
+        }
+
+        const B = [lerp(xA, xB, v00, v10), yA];
+        const R = [xB, lerp(yA, yB, v10, v11)];
+        const T = [lerp(xA, xB, v01, v11), yB];
+        const L = [xA, lerp(yA, yB, v00, v01)];
+        const TL = [xA, yA], TR = [xB, yA], BR = [xB, yB], BL = [xA, yB];
+
+        if (idx === 5 || idx === 10) {
+          const mid = (v00 + v10 + v11 + v01) * 0.25 >= level;
+          const pair00 = (idx === 5) === mid;
+          if (idx === 5) {
+            if (pair00) {
+              emit([TL, B, L]);
+              emit([BR, T, R]);
+            } else emit([TL, B, R, BR, T, L]);
+          } else if (pair00) emit([TR, R, T, BL, L, B]);
+          else {
+            emit([TR, R, B]);
+            emit([BL, L, T]);
+          }
+          continue;
+        }
+
+        if (idx === 1) emit([TL, B, L]);
+        else if (idx === 2) emit([TR, R, B]);
+        else if (idx === 4) emit([BR, T, R]);
+        else if (idx === 8) emit([BL, L, T]);
+        else if (idx === 3) emit([TL, TR, R, L]);
+        else if (idx === 6) emit([TR, BR, T, B]);
+        else if (idx === 12) emit([BR, BL, L, R]);
+        else if (idx === 9) emit([TL, B, T, BL]);
+        else if (idx === 7) emit([TL, TR, BR, T, L]);
+        else if (idx === 14) emit([TR, BR, BL, L, B]);
+        else if (idx === 13) emit([TL, B, R, BR, BL]);
+        else if (idx === 11) emit([TL, TR, R, T, BL]);
+      }
+    }
   }
 };

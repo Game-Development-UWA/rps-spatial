@@ -174,6 +174,7 @@ function iconSvg(name) {
     play: '<path d="M5 3.2v13.6L17 10z"/>',
     pause: '<path d="M4.2 3.2h3.4v13.6H4.2zm8.2 0h3.4v13.6h-3.4z"/>',
     step: '<path d="M3.6 3.4v13.2h2V3.4zm3.4 0v13.2L16.6 10z"/>',
+    repeat: '<path d="M4.1 10A5.9 5.9 0 0 1 14.2 6.2L16 4.4V9h-4.6l1.6-1.6A4.1 4.1 0 1 0 14.1 13h1.85A5.9 5.9 0 0 1 4.1 10z"/>',
     rand: '<path d="M10 3.1a6.9 6.9 0 1 0 6.5 8.9h-2.15a4.75 4.75 0 1 1-4.35-6.7 4.6 4.6 0 0 1 3.35 1.45L11.8 8.3H17V3.1l-1.7 1.8A6.9 6.9 0 0 0 10 3.1z"/>'
   };
   return '<svg viewBox="0 0 20 20" aria-hidden="true">' + (paths[name] || "") + "</svg>";
@@ -206,8 +207,7 @@ class PanelView {
     this.onResize = null;
     this.resize();
     new ResizeObserver(() => {
-      this.resize();
-      if (this.onResize) this.onResize();
+      if (this.resize() && this.onResize) this.onResize();
     }).observe(panel);
   }
 
@@ -276,14 +276,63 @@ class PanelView {
   }
 
   resize() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
     const rect = this.canvas.getBoundingClientRect();
     this.cssW = Math.max(1, rect.width);
     this.cssH = Math.max(1, rect.height);
-    this.canvas.width = Math.round(this.cssW * dpr);
-    this.canvas.height = Math.round(this.cssH * dpr);
+    const w = Math.round(this.cssW * dpr);
+    const h = Math.round(this.cssH * dpr);
+    if (this.canvas.width === w && this.canvas.height === h) return false;
+    this.canvas.width = w;
+    this.canvas.height = h;
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return true;
   }
+}
+
+function hexRgb(hex) {
+  const h = String(hex).replace("#", "");
+  const n = h.length === 3
+    ? h.split("").map((c) => parseInt(c + c, 16))
+    : [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  return n;
+}
+
+function mixRgb(a, b, t) {
+  return [
+    Math.round(a[0] + (b[0] - a[0]) * t),
+    Math.round(a[1] + (b[1] - a[1]) * t),
+    Math.round(a[2] + (b[2] - a[2]) * t)
+  ];
+}
+
+function cssRgb(rgb, a) {
+  if (a == null || a >= 0.999) return "rgb(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + ")";
+  return "rgba(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + "," + a + ")";
+}
+
+function demoStops() {
+  const raw = (typeof CONFIG !== "undefined" && CONFIG.demo && CONFIG.demo.palette) || [
+    "#2a62c8", "#2f9d62", "#d43c3c"
+  ];
+  return (Array.isArray(raw) ? raw : [raw]).map(hexRgb);
+}
+
+function paletteAt(t, stops) {
+  const cols = stops || demoStops();
+  if (cols.length === 1) return cols[0];
+  const u = Math.max(0, Math.min(1, t)) * (cols.length - 1);
+  const i = Math.min(cols.length - 2, Math.floor(u));
+  return mixRgb(cols[i], cols[i + 1], u - i);
+}
+
+function clipPlotBox(ctx, box) {
+  if (!box || box.w <= 0 || box.h <= 0) return;
+  const r = Math.min(16, box.w * 0.06, box.h * 0.06);
+  ctx.beginPath();
+  if (typeof ctx.roundRect === "function") ctx.roundRect(box.x, box.y, box.w, box.h, r);
+  else ctx.rect(box.x, box.y, box.w, box.h);
+  ctx.clip();
 }
 
 class CurvePlot {
@@ -344,9 +393,7 @@ class CurvePlot {
     const origin = this.toScreen(0, 0);
     const box = this.box;
     ctx.save();
-    ctx.beginPath();
-    ctx.rect(box.x, box.y, box.w, box.h);
-    ctx.clip();
+    clipPlotBox(ctx, box);
     ctx.strokeStyle = "rgba(255,255,255,0.14)";
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -363,29 +410,27 @@ class CurvePlot {
     const ctx = this.view.ctx;
     const box = this.box;
     ctx.save();
-    ctx.beginPath();
-    ctx.rect(box.x, box.y, box.w, box.h);
-    ctx.clip();
-    ctx.beginPath();
-    for (let i = 0; i <= 220; i++) {
-      const x = this.xMin + (this.xMax - this.xMin) * (i / 220);
-      const p = this.toScreen(x, this.fn(x));
-      if (i === 0) ctx.moveTo(p.x, p.y);
-      else ctx.lineTo(p.x, p.y);
-    }
-    const valley = this.toScreen(World1D.fadeX(), 0).x;
-    const t = Math.max(0.02, Math.min(0.98, (valley - box.x) / box.w));
-    const a0 = 0.88;
-    const a1 = 0.88 * eastAlpha;
-    const grad = ctx.createLinearGradient(box.x, 0, box.x + box.w, 0);
-    grad.addColorStop(0, "rgba(230,230,230," + a0 + ")");
-    grad.addColorStop(t, "rgba(230,230,230," + a0 + ")");
-    grad.addColorStop(Math.min(1, t + 0.1), "rgba(230,230,230," + a1 + ")");
-    grad.addColorStop(1, "rgba(230,230,230," + a1 + ")");
-    ctx.strokeStyle = eastAlpha >= 0.999 ? "rgba(230,230,230,0.88)" : grad;
+    clipPlotBox(ctx, box);
+    const span = this.yMax - this.yMin || 1;
     ctx.lineWidth = 2;
     ctx.lineJoin = "round";
-    ctx.stroke();
+    ctx.lineCap = "round";
+    let prev = null;
+    for (let i = 0; i <= 220; i++) {
+      const x = this.xMin + (this.xMax - this.xMin) * (i / 220);
+      const y = this.fn(x);
+      const p = this.toScreen(x, y);
+      if (prev) {
+        const t = (y - this.yMin) / span;
+        const fade = x > World1D.fadeX() ? eastAlpha : 1;
+        ctx.beginPath();
+        ctx.moveTo(prev.x, prev.y);
+        ctx.lineTo(p.x, p.y);
+        ctx.strokeStyle = cssRgb(paletteAt(t), 0.9 * fade);
+        ctx.stroke();
+      }
+      prev = p;
+    }
     ctx.restore();
   }
 
@@ -393,9 +438,7 @@ class CurvePlot {
     const ctx = this.view.ctx;
     const box = this.box;
     ctx.save();
-    ctx.beginPath();
-    ctx.rect(box.x, box.y, box.w, box.h);
-    ctx.clip();
+    clipPlotBox(ctx, box);
     ctx.beginPath();
     for (let i = 0; i <= 180; i++) {
       const x = this.xMin + (this.xMax - this.xMin) * (i / 180);
@@ -418,9 +461,7 @@ class CurvePlot {
     const a = this.toScreen(x - s, y - slope * s);
     const b = this.toScreen(x + s, y + slope * s);
     ctx.save();
-    ctx.beginPath();
-    ctx.rect(this.box.x, this.box.y, this.box.w, this.box.h);
-    ctx.clip();
+    clipPlotBox(ctx, this.box);
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(b.x, b.y);
@@ -434,9 +475,7 @@ class CurvePlot {
     const ctx = this.view.ctx;
     const p = this.toScreen(x, this.fn(x));
     ctx.save();
-    ctx.beginPath();
-    ctx.rect(this.box.x, this.box.y, this.box.w, this.box.h);
-    ctx.clip();
+    clipPlotBox(ctx, this.box);
     ctx.beginPath();
     ctx.moveTo(p.x, this.box.y);
     ctx.lineTo(p.x, this.box.y + this.box.h);
@@ -448,13 +487,14 @@ class CurvePlot {
 }
 
 function drawDot(ctx, x, y, r, fill, stroke) {
+  const radius = r == null ? 7 : r;
   ctx.beginPath();
-  ctx.arc(x, y, r, 0, Math.PI * 2);
-  ctx.fillStyle = fill || "#eee";
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.fillStyle = fill || "#f4f4f4";
   ctx.fill();
   if (stroke !== false) {
-    ctx.strokeStyle = stroke || "rgba(10,10,10,0.7)";
-    ctx.lineWidth = 1.1;
+    ctx.strokeStyle = stroke || "rgba(8,8,10,0.92)";
+    ctx.lineWidth = Math.max(1.6, radius * 0.28);
     ctx.stroke();
   }
 }
@@ -468,13 +508,15 @@ function drawArrow(ctx, x0, y0, x1, y1, color) {
   ctx.moveTo(x0, y0);
   ctx.lineTo(x1, y1);
   ctx.strokeStyle = color;
-  ctx.lineWidth = 1.6;
+  ctx.lineWidth = 2.6;
+  ctx.lineCap = "round";
   ctx.stroke();
   const a = Math.atan2(dy, dx);
+  const head = 11;
   ctx.beginPath();
   ctx.moveTo(x1, y1);
-  ctx.lineTo(x1 - 7 * Math.cos(a - 0.42), y1 - 7 * Math.sin(a - 0.42));
-  ctx.lineTo(x1 - 7 * Math.cos(a + 0.42), y1 - 7 * Math.sin(a + 0.42));
+  ctx.lineTo(x1 - head * Math.cos(a - 0.4), y1 - head * Math.sin(a - 0.4));
+  ctx.lineTo(x1 - head * Math.cos(a + 0.4), y1 - head * Math.sin(a + 0.4));
   ctx.closePath();
   ctx.fillStyle = color;
   ctx.fill();
@@ -489,9 +531,7 @@ const DistStrip = {
     const origin = spec.origin;
     const neighbourhood = spec.neighbourhood;
     ctx.save();
-    ctx.beginPath();
-    ctx.rect(box.x, box.y, box.w, box.h);
-    ctx.clip();
+    clipPlotBox(ctx, box);
     const mid = along ? box.y + box.h * 0.72 : box.x + box.w * 0.28;
     ctx.strokeStyle = "rgba(255,255,255,0.12)";
     ctx.lineWidth = 1;
@@ -548,8 +588,8 @@ const DistStrip = {
         ctx.fill();
       });
     };
-    mark(spec.ticks, 0.28, 2.4);
-    mark(spec.chosen, 0.95, 3.2);
+    mark(spec.ticks, 0.42, 3.4);
+    mark(spec.chosen, 0.98, 4.6);
     ctx.restore();
   }
 };
@@ -608,15 +648,18 @@ class ContourPlot {
     this.yMin = (opts && opts.yMin) || -1.15;
     this.yMax = (opts && opts.yMax) || 1.15;
     this.strips = !!(opts && opts.strips);
-    this.cols = (opts && opts.cols) || 42;
-    this.rows = (opts && opts.rows) || 32;
-    this.levels = (opts && opts.levels) || 14;
+    this.cellPx = (opts && opts.cellPx) ||
+      (typeof CONFIG !== "undefined" && CONFIG.demo && CONFIG.demo.cellPx) || 7;
+    this.fixedCols = opts && opts.cols;
+    this.fixedRows = opts && opts.rows;
+    this.cols = this.fixedCols || 64;
+    this.rows = this.fixedRows || 48;
+    this.levels = (opts && opts.levels) || 12;
     this.basePad = (opts && opts.pad) || { t: 10, r: 10, b: 10, l: 10 };
     this.z = null;
     this.zMin = 0;
     this.zMax = 1;
     this.layout();
-    this.bake();
   }
 
   layout() {
@@ -636,6 +679,8 @@ class ContourPlot {
       w: Math.max(8, w - this.pad.l - this.pad.r),
       h: Math.max(8, h - this.pad.t - this.pad.b)
     };
+    if (!this.fixedCols) this.cols = Math.min(72, Math.max(28, Math.round(this.box.w / this.cellPx)));
+    if (!this.fixedRows) this.rows = Math.min(54, Math.max(22, Math.round(this.box.h / this.cellPx)));
     if (this.strips) {
       this.stripXBox = {
         x: this.box.x,
@@ -673,17 +718,30 @@ class ContourPlot {
     this.stampField();
   }
 
+  dropCache() {
+    this.fieldCache = null;
+    this.z = null;
+  }
+
   stampField() {
-    const w = Math.max(1, Math.round(this.view.cssW));
-    const h = Math.max(1, Math.round(this.view.cssH));
+    if (this.view.cssW < 8 || this.view.cssH < 8) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    const cssW = Math.max(1, this.view.cssW);
+    const cssH = Math.max(1, this.view.cssH);
+    const w = Math.max(1, Math.round(cssW * dpr));
+    const h = Math.max(1, Math.round(cssH * dpr));
     if (!this.fieldCache) this.fieldCache = document.createElement("canvas");
     if (this.fieldCache.width !== w || this.fieldCache.height !== h) {
       this.fieldCache.width = w;
       this.fieldCache.height = h;
     }
     const ctx = this.fieldCache.getContext("2d");
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, w, h);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.paintField(ctx);
+    this.fieldCssW = cssW;
+    this.fieldCssH = cssH;
   }
 
   toScreen(x, y) {
@@ -715,37 +773,39 @@ class ContourPlot {
   }
 
   drawField() {
-    if (this.fieldCache) this.view.ctx.drawImage(this.fieldCache, 0, 0);
-    else this.paintField(this.view.ctx);
+    if (!this.fieldCache || !this.z) this.bake();
+    if (this.fieldCache) {
+      this.view.ctx.drawImage(
+        this.fieldCache,
+        0,
+        0,
+        this.fieldCssW || this.view.cssW,
+        this.fieldCssH || this.view.cssH
+      );
+    } else this.paintField(this.view.ctx);
   }
 
   paintField(ctx) {
     const { box, cols, rows, z, zMin, zMax } = this;
+    if (!z) return;
     const nx = cols + 1;
     const cellW = box.w / cols;
     const cellH = box.h / rows;
     const span = zMax - zMin || 1;
     ctx.save();
-    ctx.beginPath();
-    ctx.rect(box.x, box.y, box.w, box.h);
-    ctx.clip();
-    ctx.fillStyle = "rgb(31,31,31)";
+    clipPlotBox(ctx, box);
+    const stops = demoStops();
+    const ground = mixRgb([16, 18, 24], stops[0], 0.22);
+    ctx.fillStyle = cssRgb(ground);
     ctx.fillRect(box.x, box.y, box.w, box.h);
-    for (let j = 0; j < rows; j++) {
-      for (let i = 0; i < cols; i++) {
-        const avg = (
-          z[j * nx + i] +
-          z[j * nx + i + 1] +
-          z[(j + 1) * nx + i] +
-          z[(j + 1) * nx + i + 1]
-        ) * 0.25;
-        let t = (avg - zMin) / span;
-        t = Math.max(0, Math.min(1, t));
-        t = Math.floor(t * this.levels) / this.levels;
-        const g = Math.max(0, 31 - Math.round((1 - t) * 22));
-        ctx.fillStyle = "rgb(" + g + "," + g + "," + g + ")";
-        ctx.fillRect(box.x + i * cellW, box.y + j * cellH, cellW + 0.6, cellH + 0.6);
-      }
+    for (let L = 0; L < this.levels; L++) {
+      const u = L / (this.levels - 1);
+      const level = zMin + span * (0.08 + 0.84 * u);
+      const fill = mixRgb(ground, paletteAt(u, stops), 0.42 + 0.48 * u);
+      ctx.beginPath();
+      Contours.addAbove(ctx, z, cols, rows, nx, level, cellW, cellH, box.x, box.y);
+      ctx.fillStyle = cssRgb(fill);
+      ctx.fill();
     }
     ctx.lineWidth = 1;
     ctx.lineJoin = "round";
@@ -753,16 +813,15 @@ class ContourPlot {
       const u = L / (this.levels - 1);
       const level = zMin + span * (0.08 + 0.84 * u);
       const { open, closed } = Contours.paths(z, cols, rows, nx, level, cellW, cellH);
-      const g = Math.round(31 + 20 + u * 22);
-      ctx.strokeStyle = "rgb(" + g + "," + g + "," + g + ")";
+      ctx.strokeStyle = cssRgb(mixRgb(paletteAt(u, stops), [255, 255, 255], 0.18), 0.85);
       ctx.beginPath();
       const stroke = (pts) => {
         if (!pts.length) return;
         ctx.moveTo(box.x + pts[0][0], box.y + pts[0][1]);
         for (let k = 1; k < pts.length; k++) ctx.lineTo(box.x + pts[k][0], box.y + pts[k][1]);
       };
-      open.forEach((pts) => { if (pts.length >= 3) stroke(pts); });
-      closed.forEach((pts) => { if (pts.length >= 4) stroke(pts); });
+      for (const pts of open) if (pts.length >= 3) stroke(pts);
+      for (const pts of closed) if (pts.length >= 4) stroke(pts);
       ctx.stroke();
     }
     ctx.restore();

@@ -85,8 +85,7 @@ class CubicProbe {
 
   bind() {
     new ResizeObserver(() => {
-      this.resize();
-      this.draw();
+      if (this.resize()) this.draw();
     }).observe(this.panel);
     this.plots.forEach((plot) => {
       plot.canvas.addEventListener("pointermove", (e) => this.onMove(plot, e));
@@ -99,20 +98,31 @@ class CubicProbe {
   }
 
   resize() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    let changed = false;
     this.plots.forEach((plot) => {
       const rect = plot.canvas.getBoundingClientRect();
       plot.cssW = Math.max(1, rect.width);
       plot.cssH = Math.max(1, rect.height);
-      plot.canvas.width = Math.round(plot.cssW * dpr);
-      plot.canvas.height = Math.round(plot.cssH * dpr);
+      const w = Math.round(plot.cssW * dpr);
+      const h = Math.round(plot.cssH * dpr);
+      if (plot.canvas.width === w && plot.canvas.height === h) return;
+      changed = true;
+      plot.canvas.width = w;
+      plot.canvas.height = h;
       plot.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     });
+    return changed;
   }
 
   plotBox(plot) {
     const { t, r, b, l } = this.pad;
-    return { x: l, y: t, w: plot.cssW - l - r, h: plot.cssH - t - b };
+    return {
+      x: l,
+      y: t,
+      w: Math.max(8, plot.cssW - l - r),
+      h: Math.max(8, plot.cssH - t - b)
+    };
   }
 
   toScreen(plot, x, y) {
@@ -182,9 +192,7 @@ class CubicProbe {
     const origin = this.toScreen(plot, 0, 0);
     const box = this.plotBox(plot);
     ctx.save();
-    ctx.beginPath();
-    ctx.rect(box.x, box.y, box.w, box.h);
-    ctx.clip();
+    clipPlotBox(ctx, box);
     ctx.strokeStyle = "rgba(255,255,255,0.14)";
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -201,9 +209,7 @@ class CubicProbe {
     const box = this.plotBox(plot);
     const steps = 220;
     ctx.save();
-    ctx.beginPath();
-    ctx.rect(box.x, box.y, box.w, box.h);
-    ctx.clip();
+    clipPlotBox(ctx, box);
     ctx.beginPath();
     for (let i = 0; i <= steps; i++) {
       const x = this.xMin + (this.xMax - this.xMin) * (i / steps);
@@ -225,9 +231,7 @@ class CubicProbe {
     const box = this.plotBox(plot);
 
     ctx.save();
-    ctx.beginPath();
-    ctx.rect(box.x, box.y, box.w, box.h);
-    ctx.clip();
+    clipPlotBox(ctx, box);
     ctx.beginPath();
     ctx.moveTo(p.x, box.y);
     ctx.lineTo(p.x, box.y + box.h);
