@@ -1,287 +1,296 @@
-import random
-from time import sleep
+import colorsys
+import multiprocessing as mp
+import os
+import sys
+from concurrent.futures import ProcessPoolExecutor
+from heapq import nlargest
+from itertools import combinations
 
-from utils import CLAN_COLORS, CLAN_SYMBOLS, CLANS, COLOR_RESET, PREDATOR_OF, PREY_OF, Point
+import numpy as np
+
+from settings import (
+    GRIDSIZE, WINDOWSIZE,
+    SWARMS, SWARMSIZE, MAX_STEPS, SAMPLE,
+    BACKGROUND
+)
 
 
-def _sign(value):
-    if value > 0:
-        return 1
-    if value < 0:
-        return -1
-    return 0
+def generate_colours(n, saturation=0.75, value=0.85):
+    return [
+        tuple(round(c * 255) for c in colorsys.hsv_to_rgb(i / n, saturation, value))
+        for i in range(n)
+    ]
 
 
-def _clamp(value, low, high):
-    return max(low, min(high, value))
+def colour_text(text, rgb):
+    r, g, b = (int(c) for c in rgb[:3])
+    return f'\033[38;2;{r};{g};{b}m{text}\033[0m'
+
+
+def gather(swarms, indices):
+    """One (N, 2) array of every unit in `indices`. Clients take a single enemy
+    array, so the k prey (or k predators) are concatenated into one."""
+    parts = [swarms[i].positions for i in indices if swarms[i].positions.size]
+    if not parts:
+        return np.empty((0, 2), dtype=int)
+    # the single-part fast path keeps k = 1 allocating exactly as it did before
+    return parts[0] if len(parts) == 1 else np.concatenate(parts)
+
+
+def print_match(rows, population, title=None, colours=None):
+    if title:
+        print(title)
+    if colours is None:
+        colours = generate_colours(len(rows))
+    for i, row in enumerate(rows):
+        client_id = row['id'] if 'id' in row else int(row['swarm'])
+        line = (
+            f"  id {client_id} {population[client_id]}: "
+            f"living={row['living']:.2f} "
+            f"prey_surviving={row['prey_surviving']:.2f} "
+            f"kills={row['kills']:.1f} "
+            f"score={row['score']:.2f}"
+        )
+        print(colour_text(line, colours[i]))
+
+
+def print_scores(population, scores, title='final scores'):
+    print(title)
+    colours = generate_colours(len(population))
+    for i, score in enumerate(scores):
+        line = f'  id {i} {population[i]}: score={score:.2f}'
+        print(colour_text(line, colours[i]))
+
+
+class Swarm:
+    def __init__(self, population, client, colour):
+        flat = np.random.choice(GRIDSIZE * GRIDSIZE, size=population, replace=False)
+        xs = flat % GRIDSIZE
+        ys = flat // GRIDSIZE
+        self.positions = np.column_stack((xs, ys))
+        self.velocities = np.zeros((population, 2), dtype=int)
+        self.client = client
+        self.colour = np.asarray(colour, dtype=np.uint8)
+        self.kills = 0
+
+    def getResponse(self, preyposes, predposes):
+        if self.positions.size == 0:
+            return
+        if preyposes.size == 0 and predposes.size == 0:
+            # no prey and no predators left: nothing to chase or flee.
+            # A single empty side is the client's business -- they contribute
+            # only the term they have units for.
+            self.velocities = np.zeros_like(self.velocities)
+            return
+        self.velocities = self.client.getResponse(self.positions, preyposes, predposes)
+
+    def step(self):
+        if self.positions.size == 0:
+            return
+
+        self.positions += self.velocities
+
+        while True:
+            mask = (np.clip(self.positions, 0, GRIDSIZE - 1) != self.positions)
+            self.positions -= self.velocities * mask
+            self.velocities *= 1 - mask
+
+            flat_positions = self.positions[:, 1] * GRIDSIZE + self.positions[:, 0]
+            _, inverse, counts = np.unique(flat_positions, return_inverse=True, return_counts=True)
+
+            if not np.any(counts > 1):
+                break
+
+            mask = (counts[inverse] > 1).astype(int).reshape(-1, 1)
+
+            self.positions -= self.velocities * mask
+            self.velocities *= 1 - mask
 
 
 class Game:
-    def __init__(
-        self,
-        players,
-        grid_size=(400, 400),
-        entities_per_clan=25,
-        array_size=50,
-        hunger=False,
-        reproduction=False,
-        hunger_ticks=10,
-        reproduction_prey=3,
-    ):
-        if len(players) != 3:
-            raise ValueError("Game requires exactly 3 players.")
-        if entities_per_clan > array_size:
-            raise ValueError("entities_per_clan cannot exceed array_size.")
-        if hunger_ticks < 1:
-            raise ValueError("hunger_ticks must be at least 1.")
-        if reproduction_prey < 1:
-            raise ValueError("reproduction_prey must be at least 1.")
-
-        self.players = dict(zip(CLANS, players))
-        self.width, self.height = grid_size
-        self.entities_per_clan = entities_per_clan
-        self.array_size = array_size
-        self.hunger = hunger
-        self.reproduction = reproduction
-        self.hunger_ticks = hunger_ticks
-        self.reproduction_prey = reproduction_prey
-        self.positions = {clan: [None] * array_size for clan in CLANS}
-        self.tick_count = 0
-        self._last_prey_tick = {clan: 0 for clan in CLANS}
-        self._prey_kills = {clan: 0 for clan in CLANS}
-
-    def start(self):
-        total_needed = self.entities_per_clan * 3
-        cells = self._random_cells(total_needed)
-
-        index = 0
-        for clan in CLANS:
-            for entity_index in range(self.entities_per_clan):
-                self.positions[clan][entity_index] = cells[index]
-                index += 1
-        self.tick_count = 0
-        self._last_prey_tick = {clan: 0 for clan in CLANS}
-        self._prey_kills = {clan: 0 for clan in CLANS}
-
-    def _random_cells(self, count):
-        prioritized_cells = []
-        for x in range(self.width):
-            for y in range(self.height):
-                prioritized_cells.append((random.random(), (x, y)))
-
-        prioritized_cells.sort()
-        return [cell for _, cell in prioritized_cells[:count]]
-
-    def step(self):
-        new_positions = {clan: list(self.positions[clan]) for clan in CLANS}
-
-        for clan in CLANS:
-            self_arr = self.positions[clan]
-            prey_arr = self.positions[PREY_OF[clan]]
-            predator_arr = self.positions[PREDATOR_OF[clan]]
-            directions = self.players[clan].play(
-                list(self_arr), list(prey_arr), list(predator_arr)
+    def __init__(self, clients, gui=True):
+        n = len(clients)
+        if n < 3 or n % 2 == 0:
+            raise ValueError(
+                f'generalised RPS needs an odd number of swarms >= 3, got {n}. '
+                'An even count makes i and i + n/2 beat each other, so the '
+                'relation stops being a tournament.'
             )
+        # each swarm eats the k below it on the cycle and is eaten by the k above
+        self.k = (n - 1) // 2
+        colours = generate_colours(len(clients))
+        self.swarms = [Swarm(SWARMSIZE, client, colour) for client, colour in zip(clients, colours)]
+        self.gui = gui
+        self.pg = None
+        self.screen = None
+        self.clock = None
+        self.grid = None
 
-            for index, position in enumerate(self_arr):
-                if position is None or not directions or index >= len(directions):
-                    continue
-                direction = directions[index]
-                if not direction:
-                    continue
-                dx, dy = direction
-                x, y = position
-                new_positions[clan][index] = (
-                    _clamp(x + _sign(dx), 0, self.width - 1),
-                    _clamp(y + _sign(dy), 0, self.height - 1),
+        if gui:
+            import pygame as pg
+            self.pg = pg
+            pg.init()
+            self.screen = pg.display.set_mode(WINDOWSIZE)
+            pg.display.set_caption("Rock Paper Scissors Simulation")
+            self.clock = pg.time.Clock()
+            self.grid = pg.Surface((GRIDSIZE, GRIDSIZE))
+
+    def run(self):
+        n = len(self.swarms)
+        prey_of = [[(i - d) % n for d in range(1, self.k + 1)] for i in range(n)]
+        pred_of = [[(i + d) % n for d in range(1, self.k + 1)] for i in range(n)]
+        running = True
+        step = 0
+        while running:
+            if self.gui:
+                for event in self.pg.event.get():
+                    if event.type == self.pg.QUIT:
+                        running = False
+                self.screen.fill(BACKGROUND)
+                self.grid.fill(BACKGROUND)
+                pixels = self.pg.surfarray.pixels3d(self.grid)
+
+            # Update Swarm Positions
+            for i, swarm in enumerate(self.swarms):
+                swarm.getResponse(
+                    gather(self.swarms, prey_of[i]),
+                    gather(self.swarms, pred_of[i]),
                 )
+            for swarm in self.swarms:
+                swarm.step()
 
-        self._resolve_same_clan_overlaps(self.positions, new_positions)
-        self.positions = new_positions
-        self.tick_count += 1
-        prey_kills = self._resolve_collisions()
-        for clan, kills in prey_kills.items():
-            if kills:
-                self._last_prey_tick[clan] = self.tick_count
-                self._prey_kills[clan] += kills
-
-        self._apply_population_rules()
-
-    def _resolve_same_clan_overlaps(self, old_positions, new_positions):
-        """Assign every live entity a unique position."""
-        for clan in CLANS:
-            live_indices = [
-                index for index, position in enumerate(old_positions[clan]) if position is not None
+            # Standard elimination
+            # 1. Snapshot the board
+            keys = [
+                swarm.positions[:, 1] * GRIDSIZE + swarm.positions[:, 0]
+                if swarm.positions.size else np.empty(0, dtype=int)
+                for swarm in self.swarms
             ]
-            old_cells = [old_positions[clan][index] for index in live_indices]
-            if len(old_cells) != len(set(old_cells)):
-                raise RuntimeError(f"{clan} has duplicate positions before movement")
 
-            candidates = {}
-            for index in live_indices:
-                proposed = new_positions[clan][index]
-                fallback = old_positions[clan][index]
-                candidates[index] = [
-                    cell for cell in (proposed, fallback) if cell is not None
-                ]
-                candidates[index] = list(dict.fromkeys(candidates[index]))
+            dead = [np.zeros(len(key), dtype=bool) for key in keys]
 
-            cell_to_index = {}
-            indices = list(live_indices)
-            random.shuffle(indices)
-
-            def match(index, visited):
-                for cell in candidates[index]:
-                    if cell in visited:
+            # 2. Resolve every pairing against the snapshot, i eats j.
+            #    the nearest-in-cycle predator claims a shared victim.
+            for d in range(1, self.k + 1):
+                for i in range(n):
+                    j = (i - d) % n
+                    if keys[i].size == 0 or keys[j].size == 0:
                         continue
-                    visited.add(cell)
-                    owner = cell_to_index.get(cell)
-                    if owner is None or match(owner, visited):
-                        cell_to_index[cell] = index
-                        return True
-                return False
+                    eats = np.isin(keys[j], keys[i]) & ~dead[j]
+                    self.swarms[i].kills += int(eats.sum())
+                    dead[j] |= eats
 
-            for index in indices:
-                if not match(index, set()):
-                    raise RuntimeError(f"Unable to resolve {clan} movement")
+            # 3. Apply deletions only once every pairing is resolved
+            for swarm, mask in zip(self.swarms, dead):
+                if mask.any():
+                    swarm.positions = swarm.positions[~mask]
+                    swarm.velocities = swarm.velocities[~mask]
 
-            resolved = [None] * len(new_positions[clan])
-            for cell, index in cell_to_index.items():
-                resolved[index] = cell
-            new_positions[clan] = resolved
+            # Direct Pixel Rendering
+            if self.gui:
+                for swarm in self.swarms:
+                    if swarm.positions.size == 0:
+                        continue
+                    xs, ys = swarm.positions[:, 0], swarm.positions[:, 1]
+                    pixels[xs, ys] = swarm.colour
+                del pixels
+                self.screen.blit(self.pg.transform.scale(self.grid, WINDOWSIZE), (0, 0))
+                self.pg.display.flip()
+                self.clock.tick(150)
 
-    def _resolve_collisions(self):
-        occupancy: dict[Point, dict[str, list[int]]] = {}
-        prey_kills = {clan: 0 for clan in CLANS}
-        for clan in CLANS:
-            for index, position in enumerate(self.positions[clan]):
-                if position is not None:
-                    occupancy.setdefault(position, {}).setdefault(clan, []).append(index)
+            # 4. End condition
+            step += 1
+            living = sum(1 for swarm in self.swarms if swarm.positions.size > 0)
+            if step >= MAX_STEPS or living <= 2:
+                running = False
 
-        for clan_map in occupancy.values():
-            clans_here = set(clan_map)
-            if len(clans_here) == 3:
-                for clan, indices in clan_map.items():
-                    for index in indices:
-                        self.positions[clan][index] = None
-            elif len(clans_here) == 2:
-                first, second = tuple(clans_here)
-                predator, prey = (
-                    (first, second) if PREY_OF[first] == second else (second, first)
-                )
-                for index in clan_map[prey]:
-                    self.positions[prey][index] = None
-                    prey_kills[predator] += 1
-        return prey_kills
+        if self.gui:
+            self.pg.quit()
+        return self.metrics()
 
-    def _apply_population_rules(self):
-        if self.hunger:
-            for clan in CLANS:
-                if (
-                    self.tick_count - self._last_prey_tick[clan] >= self.hunger_ticks
-                ):
-                    live_indices = [
-                        index
-                        for index, position in enumerate(self.positions[clan])
-                        if position is not None
-                    ]
-                    if live_indices:
-                        self.positions[clan][random.choice(live_indices)] = None
-                    self._last_prey_tick[clan] = self.tick_count
+    def metrics(self):
+        n = len(self.swarms)
+        results = []
+        for i, swarm in enumerate(self.swarms):
+            living = 0 if swarm.positions.size == 0 else len(swarm.positions)
+            prey_surviving = sum(
+                len(self.swarms[(i - d) % n].positions) for d in range(1, self.k + 1)
+            )
+            results.append({
+                'swarm': i,
+                'living': living,
+                'prey_surviving': prey_surviving,
+                'kills': swarm.kills,
+                'score': living - prey_surviving,
+            })
+        return results
 
-        if self.reproduction:
-            for clan in CLANS:
-                while self._prey_kills[clan] >= self.reproduction_prey:
-                    empty_index = next(
-                        (
-                            index
-                            for index, position in enumerate(self.positions[clan])
-                            if position is None
-                        ),
-                        None,
-                    )
-                    if empty_index is None:
-                        break
-                    position = self._random_free_cell()
-                    if position is None:
-                        break
-                    self.positions[clan][empty_index] = position
-                    self._prey_kills[clan] -= self.reproduction_prey
-
-    def _random_free_cell(self):
-        occupied = {
-            position
-            for positions in self.positions.values()
-            for position in positions
-            if position is not None
-        }
-        free_cells = [
-            (x, y)
-            for x in range(self.width)
-            for y in range(self.height)
-            if (x, y) not in occupied
-        ]
-        return random.choice(free_cells) if free_cells else None
-
-    def alive_counts(self):
-        return {
-            clan: sum(position is not None for position in self.positions[clan])
-            for clan in CLANS
-        }
-
-    def render(self):
-        grid = [["." for _ in range(self.width)] for _ in range(self.height)]
-        for clan in CLANS:
-            for position in self.positions[clan]:
-                if position is not None:
-                    x, y = position
-                    symbol = CLAN_SYMBOLS[clan]
-                    grid[y][x] = f"{CLAN_COLORS[clan]}{symbol}{COLOR_RESET}"
-        return "\n".join("".join(row) for row in grid)
-
-    def is_over(self):
-        return sum(count > 0 for count in self.alive_counts().values()) <= 1
-
-
-class Server:
-    """Wire three clients into a game and run it to completion."""
-
-    def __init__(
-        self,
-        players,
-        grid_size=(50, 50),
-        entities_per_clan=25,
-        max_ticks=1000,
-        hunger=False,
-        reproduction=False,
-        hunger_ticks=10,
-        reproduction_prey=3,
-    ):
-        self.game = Game(
-            players,
-            grid_size=grid_size,
-            entities_per_clan=entities_per_clan,
-            hunger=hunger,
-            reproduction=reproduction,
-            hunger_ticks=hunger_ticks,
-            reproduction_prey=reproduction_prey,
+    def print(self, results=None):
+        print_match(
+            results or self.metrics(),
+            [swarm.client for swarm in self.swarms],
+            colours=[swarm.colour for swarm in self.swarms],
         )
-        self.max_ticks = max_ticks
 
-    def run(self, verbose=False):
-        self.game.start()
-        history = [self.game.alive_counts()]
 
-        for _ in range(self.max_ticks):
-            self.game.step()
-            counts = self.game.alive_counts()
-            history.append(counts)
-            if verbose:
-                print(f"tick {self.game.tick_count}: {counts}")
-                print(self.game.render())
-                print()
-                sleep(0.1)
-            if self.game.is_over():
-                break
+class Tournament:
+    def __init__(self, population, workers=None):
+        self.population = population
+        self.workers = workers or os.cpu_count() or 1
 
-        return history
+    @staticmethod
+    def _play(clients):
+        return Game(clients, gui=False).run()
+
+    def run(self, matches=None, sample=SAMPLE, swarms=SWARMS):
+        if matches is None:
+            if len(self.population) < swarms:
+                raise ValueError(
+                    f'need at least {swarms} clients to fill a match, '
+                    f'population has {len(self.population)}'
+                )
+            matches = list(combinations(range(len(self.population)), swarms))
+
+        jobs = [tuple(self.population[i] for i in match) for match in matches for _ in range(sample)]
+        if not jobs:
+            return {'matches': [], 'scores': [0.0] * len(self.population)}
+
+        workers = max(1, min(self.workers, len(jobs)))
+        if workers == 1 or len(jobs) == 1:
+            raw = [Tournament._play(job) for job in jobs]
+        else:
+            # fork copies the already-imported numpy/scipy runtime; spawn
+            # would re-import in every worker and dominate small tournaments.
+            ctx = None if sys.platform == 'win32' else mp.get_context('fork')
+            with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
+                raw = list(pool.map(Tournament._play, jobs, chunksize=1))
+
+
+        report, bags = [], [[] for _ in self.population]
+        for i, match in enumerate(matches):
+            chunk = raw[i * sample:(i + 1) * sample]
+            rows = []
+            for slot, cid in enumerate(match):
+                samples = [trial[slot] for trial in chunk]
+                avg = {
+                    key: sum(row[key] for row in samples) / len(samples)
+                    for key in samples[0]
+                }
+                bags[cid].append(avg['score'])
+                rows.append({'id': cid, **avg})
+            report.append(rows)
+
+        scores = [sum(bag) / len(bag) if bag else 0.0 for bag in bags]
+        return {'matches': report, 'scores': scores}
+
+    def fitness(self, results):
+        return results['scores']
+
+    def top(self, results, n=SWARMS):
+        ids = nlargest(n, range(len(self.population)), key=results['scores'].__getitem__)
+        return [self.population[i] for i in ids]
+
+    def print(self, results):
+        for i, rows in enumerate(results['matches']):
+            print_match(rows, self.population, f'match {i}')
+        print_scores(self.population, results['scores'])
