@@ -3,9 +3,6 @@ import inspect
 import numpy as np
 from scipy.ndimage import gaussian_filter
 
-from settings import GRIDSIZE
-
-
 class Client:
     def __init__(self):
         pass
@@ -215,10 +212,11 @@ class Gaussian(Client):
 
     def __init__(
         self,
+        gridSize,
         prey_weight=1.0,
         pred_weight=1.0,
-        prey_sigma=4.0,
-        pred_sigma=4.0,
+        prey_sigma=16.0,
+        pred_sigma=16.0,
         swarm_near_weight=0.0,
         swarm_far_weight=0.0,
         swarm_near_sigma=0.0,
@@ -227,6 +225,7 @@ class Gaussian(Client):
         visualize=False,
     ):
         super().__init__()
+        self.gridSize = gridSize
         self.prey_weight = prey_weight
         self.pred_weight = pred_weight
         self.prey_sigma = prey_sigma
@@ -240,7 +239,7 @@ class Gaussian(Client):
         self._init_buffers()
 
     def _init_buffers(self):
-        self._bins = (GRIDSIZE + self.cell - 1) // self.cell
+        self._bins = (self.gridSize[0] + self.cell - 1) // self.cell
         self._last = self._bins - 1  # number of bins - 1, for indexing
         shape = (self._bins, self._bins)
         self._field = np.zeros(shape, dtype=np.float32)

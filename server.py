@@ -1,19 +1,17 @@
 import colorsys
 import multiprocessing as mp
+import pygame as pg
 import os
 import sys
+import clients
 from concurrent.futures import ProcessPoolExecutor
 from heapq import nlargest
 from itertools import combinations
 
 import numpy as np
 
-from settings import (
-    GRIDSIZE, WINDOWSIZE,
-    SWARMS, SWARMSIZE, MAX_STEPS, SAMPLE,
-    BACKGROUND
-)
-
+from settings import *
+from clients import *
 
 def generate_colours(n, saturation=0.75, value=0.85):
     return [
@@ -63,10 +61,11 @@ def print_scores(population, scores, title='final scores'):
 
 
 class Swarm:
-    def __init__(self, population, client, colour):
-        flat = np.random.choice(GRIDSIZE * GRIDSIZE, size=population, replace=False)
-        xs = flat % GRIDSIZE
-        ys = flat // GRIDSIZE
+    def __init__(self, population, gridSize, client, colour):
+        flat = np.random.choice(gridSize[0] * gridSize[1], size=population, replace=False)
+        xs = flat % gridSize[1]
+        ys = flat // gridSize[1]
+        self.gridSize = gridSize
         self.positions = np.column_stack((xs, ys))
         self.velocities = np.zeros((population, 2), dtype=int)
         self.client = client
@@ -91,24 +90,70 @@ class Swarm:
         self.positions += self.velocities
 
         while True:
-            mask = (np.clip(self.positions, 0, GRIDSIZE - 1) != self.positions)
+            mask = (np.clip(self.positions, 0, self.gridSize[0] - 1) != self.positions)
             self.positions -= self.velocities * mask
             self.velocities *= 1 - mask
-
-            flat_positions = self.positions[:, 1] * GRIDSIZE + self.positions[:, 0]
+        
+            flat_positions = self.positions[:, 1] * self.gridSize[0] + self.positions[:, 0]
             _, inverse, counts = np.unique(flat_positions, return_inverse=True, return_counts=True)
-
+        
             if not np.any(counts > 1):
                 break
-
+        
             mask = (counts[inverse] > 1).astype(int).reshape(-1, 1)
-
+        
             self.positions -= self.velocities * mask
             self.velocities *= 1 - mask
 
+    def draw(self, grid):
+        xs, ys = self.positions[:, 0], self.positions[:, 1]
+        grid[xs, ys] = self.colour
+
+class Gui:
+    def __init__(self):
+        pg.init()
+        self.screen = pg.display.set_mode(WINDOWSIZE, pg.RESIZABLE)
+        pg.display.set_caption("Rock Paper Scissors Simulation")
+        self.clock = pg.time.Clock()
+        self.grid = pg.Surface(GRIDSIZE)
+        self.gridWidth, self.gridHeight = GRIDSIZE
+        self.width, self.height = WINDOWSIZE
+        self.margin = MARGIN * 2
+        self.stepTime = (1 / SPS if SPS else 0)
+
+    def run(self):
+        accumulator = 0
+        running = True
+        game = Game([clients.Gaussian((self.gridWidth, self.gridHeight)), clients.Gaussian((self.gridWidth, self.gridHeight)), clients.Gaussian((self.gridWidth, self.gridHeight))], [100000, 100000, 100000], generate_colours(3), (self.gridWidth, self.gridHeight))
+        while running:
+            for event in pg.event.get():
+                if event.type == pg.QUIT:
+                    running = False
+
+                elif event.type == pg.VIDEORESIZE:
+                    self.width, self.height = event.w, event.h
+
+            deltatime = self.clock.tick(0) / 1000
+            accumulator += deltatime
+
+            if accumulator >= self.stepTime:
+                game.step()
+                self.screen.fill(pg.color.Color(70, 70, 70))
+                self.grid.fill("Black")
+                game.draw(pg.surfarray.pixels3d(self.grid))
+                self.drawGrid()
+
+                accumulator -= self.stepTime
+
+            pg.display.flip()
+
+    def drawGrid(self):
+        width, height = min(self.width - self.margin, self.gridWidth * (self.height - self.margin) / self.gridHeight), min(self.gridHeight * (self.width - self.margin) / self.gridWidth, self.height - self.margin)
+        self.screen.blit(pg.transform.scale(self.grid, (width, height)), (self.margin + (self.width - self.margin * 2 - width) // 2, self.margin + (self.height - self.margin * 2 - height) // 2))
+        
 
 class Game:
-    def __init__(self, clients, gui=True):
+    def __init__(self, clients, sizes, colours, gridSize):
         n = len(clients)
         if n < 3 or n % 2 == 0:
             raise ValueError(
@@ -117,96 +162,58 @@ class Game:
                 'relation stops being a tournament.'
             )
         # each swarm eats the k below it on the cycle and is eaten by the k above
+        self.gridSize = gridSize
         self.k = (n - 1) // 2
-        colours = generate_colours(len(clients))
-        self.swarms = [Swarm(SWARMSIZE, client, colour) for client, colour in zip(clients, colours)]
-        self.gui = gui
-        self.pg = None
-        self.screen = None
-        self.clock = None
-        self.grid = None
+        self.swarms = [Swarm(size, gridSize, client, colour) for client, size, colour in zip(clients, sizes, colours)]
+        self.n = len(self.swarms)
+        self.prey_of = [[(i - d) % n for d in range(1, self.k + 1)] for i in range(n)]
+        self.pred_of = [[(i + d) % n for d in range(1, self.k + 1)] for i in range(n)]
 
-        if gui:
-            import pygame as pg
-            self.pg = pg
-            pg.init()
-            self.screen = pg.display.set_mode(WINDOWSIZE)
-            pg.display.set_caption("Rock Paper Scissors Simulation")
-            self.clock = pg.time.Clock()
-            self.grid = pg.Surface((GRIDSIZE, GRIDSIZE))
+    def step(self):
 
-    def run(self):
-        n = len(self.swarms)
-        prey_of = [[(i - d) % n for d in range(1, self.k + 1)] for i in range(n)]
-        pred_of = [[(i + d) % n for d in range(1, self.k + 1)] for i in range(n)]
-        running = True
-        step = 0
-        while running:
-            if self.gui:
-                for event in self.pg.event.get():
-                    if event.type == self.pg.QUIT:
-                        running = False
-                self.screen.fill(BACKGROUND)
-                self.grid.fill(BACKGROUND)
-                pixels = self.pg.surfarray.pixels3d(self.grid)
+        # Update Swarm Positions
+        for i, swarm in enumerate(self.swarms):
+            swarm.getResponse(
+                gather(self.swarms, self.prey_of[i]),
+                gather(self.swarms, self.pred_of[i]),
+            )
+        for swarm in self.swarms:
+            swarm.step()
 
-            # Update Swarm Positions
-            for i, swarm in enumerate(self.swarms):
-                swarm.getResponse(
-                    gather(self.swarms, prey_of[i]),
-                    gather(self.swarms, pred_of[i]),
-                )
-            for swarm in self.swarms:
-                swarm.step()
+        # Standard elimination
+        # 1. Snapshot the board
+        keys = [
+            swarm.positions[:, 1] * self.gridSize[0] + swarm.positions[:, 0]
+            if swarm.positions.size else np.empty(0, dtype=int)
+            for swarm in self.swarms
+        ]
 
-            # Standard elimination
-            # 1. Snapshot the board
-            keys = [
-                swarm.positions[:, 1] * GRIDSIZE + swarm.positions[:, 0]
-                if swarm.positions.size else np.empty(0, dtype=int)
-                for swarm in self.swarms
-            ]
+        dead = [np.zeros(len(key), dtype=bool) for key in keys]
 
-            dead = [np.zeros(len(key), dtype=bool) for key in keys]
+        # 2. Resolve every pairing against the snapshot, i eats j.
+        #    the nearest-in-cycle predator claims a shared victim.
+        for d in range(1, self.k + 1):
+            for i in range(self.n):
+                j = (i - d) % self.n
+                if keys[i].size == 0 or keys[j].size == 0:
+                    continue
+                eats = np.isin(keys[j], keys[i]) & ~dead[j]
+                self.swarms[i].kills += int(eats.sum())
+                dead[j] |= eats
 
-            # 2. Resolve every pairing against the snapshot, i eats j.
-            #    the nearest-in-cycle predator claims a shared victim.
-            for d in range(1, self.k + 1):
-                for i in range(n):
-                    j = (i - d) % n
-                    if keys[i].size == 0 or keys[j].size == 0:
-                        continue
-                    eats = np.isin(keys[j], keys[i]) & ~dead[j]
-                    self.swarms[i].kills += int(eats.sum())
-                    dead[j] |= eats
+        # 3. Apply deletions only once every pairing is resolved
+        for swarm, mask in zip(self.swarms, dead):
+            if mask.any():
+                swarm.positions = swarm.positions[~mask]
+                swarm.velocities = swarm.velocities[~mask]
 
-            # 3. Apply deletions only once every pairing is resolved
-            for swarm, mask in zip(self.swarms, dead):
-                if mask.any():
-                    swarm.positions = swarm.positions[~mask]
-                    swarm.velocities = swarm.velocities[~mask]
+        living = sum(1 for swarm in self.swarms if swarm.positions.size > 0)
+        if living <= 2:
+            return self.metrics()
 
-            # Direct Pixel Rendering
-            if self.gui:
-                for swarm in self.swarms:
-                    if swarm.positions.size == 0:
-                        continue
-                    xs, ys = swarm.positions[:, 0], swarm.positions[:, 1]
-                    pixels[xs, ys] = swarm.colour
-                del pixels
-                self.screen.blit(self.pg.transform.scale(self.grid, WINDOWSIZE), (0, 0))
-                self.pg.display.flip()
-                self.clock.tick(150)
-
-            # 4. End condition
-            step += 1
-            living = sum(1 for swarm in self.swarms if swarm.positions.size > 0)
-            if step >= MAX_STEPS or living <= 2:
-                running = False
-
-        if self.gui:
-            self.pg.quit()
-        return self.metrics()
+    def draw(self, grid):
+        for swarm in self.swarms:
+            swarm.draw(grid)
 
     def metrics(self):
         n = len(self.swarms)
@@ -240,7 +247,7 @@ class Tournament:
 
     @staticmethod
     def _play(clients):
-        return Game(clients, gui=False).run()
+        return Game(clients).step()
 
     def run(self, matches=None, sample=SAMPLE, swarms=SWARMS):
         if matches is None:
