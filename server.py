@@ -1,6 +1,7 @@
 import colorsys
 import multiprocessing as mp
 import pygame as pg
+import pygame_gui as pgui
 import os
 import sys
 import clients
@@ -19,11 +20,9 @@ def generate_colours(n, saturation=0.75, value=0.85):
         for i in range(n)
     ]
 
-
 def colour_text(text, rgb):
     r, g, b = (int(c) for c in rgb[:3])
     return f'\033[38;2;{r};{g};{b}m{text}\033[0m'
-
 
 def gather(swarms, indices):
     """One (N, 2) array of every unit in `indices`. Clients take a single enemy
@@ -33,7 +32,6 @@ def gather(swarms, indices):
         return np.empty((0, 2), dtype=int)
     # the single-part fast path keeps k = 1 allocating exactly as it did before
     return parts[0] if len(parts) == 1 else np.concatenate(parts)
-
 
 def print_match(rows, population, title=None, colours=None):
     if title:
@@ -51,14 +49,12 @@ def print_match(rows, population, title=None, colours=None):
         )
         print(colour_text(line, colours[i]))
 
-
 def print_scores(population, scores, title='final scores'):
     print(title)
     colours = generate_colours(len(population))
     for i, score in enumerate(scores):
         line = f'  id {i} {population[i]}: score={score:.2f}'
         print(colour_text(line, colours[i]))
-
 
 class Swarm:
     def __init__(self, population, gridSize, client, colour):
@@ -115,16 +111,35 @@ class Gui:
         self.screen = pg.display.set_mode(WINDOWSIZE, pg.RESIZABLE)
         pg.display.set_caption("Rock Paper Scissors Simulation")
         self.clock = pg.time.Clock()
-        self.grid = pg.Surface(GRIDSIZE)
-        self.gridWidth, self.gridHeight = GRIDSIZE
+        self.content = pg.Surface(GRIDSIZE)
+        self.gridWidth, self.gridHeight = self.gridSize = GRIDSIZE
         self.width, self.height = WINDOWSIZE
         self.margin = MARGIN * 2
         self.stepTime = (1 / SPS if SPS else 0)
 
+        self.manager = pgui.UIManager((800, 800))
+
+        self.uilt = [
+                pgui.elements.UIButton(relative_rect = pg.Rect((0, 0), (0, 0)), text="Hello World", manager = self.manager),
+                pgui.elements.UIButton(relative_rect = pg.Rect((0, 0), (0, 0)), text="Hello World", manager = self.manager),
+                pgui.elements.UIButton(relative_rect = pg.Rect((0, 0), (0, 0)), text="Hello World", manager = self.manager),
+                pgui.elements.UIButton(relative_rect = pg.Rect((0, 0), (0, 0)), text="Hello World", manager = self.manager),
+                ]
+
+        self.uirb = [
+                pgui.elements.UIButton(relative_rect = pg.Rect((0, 0), (0, 0)), text = "Start Game", manager = self.manager),
+                pgui.elements.UIButton(relative_rect = pg.Rect((0, 0), (0, 0)), text = "Start Tournament", manager = self.manager),
+                pgui.elements.UIButton(relative_rect = pg.Rect((0, 0), (0, 0)), text = "Start Train", manager = self.manager),
+                pgui.elements.UIButton(relative_rect = pg.Rect((0, 0), (0, 0)), text = "Hello World", manager = self.manager),
+                ]
+
+        self.process = None
+
+        self.resize()
+
     def run(self):
         accumulator = 0
         running = True
-        game = Game([clients.Gaussian((self.gridWidth, self.gridHeight)), clients.Gaussian((self.gridWidth, self.gridHeight)), clients.Gaussian((self.gridWidth, self.gridHeight))], [100000, 100000, 100000], generate_colours(3), (self.gridWidth, self.gridHeight))
         while running:
             for event in pg.event.get():
                 if event.type == pg.QUIT:
@@ -132,25 +147,66 @@ class Gui:
 
                 elif event.type == pg.VIDEORESIZE:
                     self.width, self.height = event.w, event.h
+                    self.resize()
+
+                elif event.type == pgui.UI_BUTTON_PRESSED:
+                    if event.ui_element == self.uirb[0]:
+                        self.process = Game([clients.Gaussian(self.gridSize), clients.Gaussian(self.gridSize), clients.Gaussian(self.gridSize)], [50000, 50000, 50000], generate_colours(3), self.gridSize)
+
+                self.manager.process_events(event)
 
             deltatime = self.clock.tick(0) / 1000
+            self.manager.update(deltatime)
             accumulator += deltatime
 
+            self.screen.fill(pg.color.Color(70, 70, 70))
+            self.manager.draw_ui(self.screen)
+
             if accumulator >= self.stepTime:
-                game.step()
-                self.screen.fill(pg.color.Color(70, 70, 70))
-                self.grid.fill("Black")
-                game.draw(pg.surfarray.pixels3d(self.grid))
-                self.drawGrid()
+                self.content.fill("Black")
+                try:
+                    self.process.step()
+                    self.process.draw(self.content)
+                except:
+                    pass
+                self.drawContent()
 
                 accumulator -= self.stepTime
 
             pg.display.flip()
 
-    def drawGrid(self):
-        width, height = min(self.width - self.margin, self.gridWidth * (self.height - self.margin) / self.gridHeight), min(self.gridHeight * (self.width - self.margin) / self.gridWidth, self.height - self.margin)
-        self.screen.blit(pg.transform.scale(self.grid, (width, height)), (self.margin + (self.width - self.margin * 2 - width) // 2, self.margin + (self.height - self.margin * 2 - height) // 2))
-        
+    def resize(self):
+        self.manager.set_window_resolution((self.width, self.height))
+
+        self.contentWidth, self.contentHeight = self.contentSize = min(self.width - self.margin, self.gridWidth * (self.height - self.margin) / self.gridHeight), min(self.gridHeight * (self.width - self.margin) / self.gridWidth, self.height - self.margin)
+        self.contentX, self.contentY = self.contentPos = self.margin + (self.width - self.margin * 2 - self.contentWidth) // 2, self.margin + (self.height - self.margin * 2 - self.contentHeight) // 2  
+
+        if self.width - self.contentWidth > self.height - self.contentHeight:
+            elementWidth = (self.width - self.margin * 2 - self.contentWidth) // 2
+            elementHeight = (self.height - self.margin * 2.5) // 4
+    
+            for index, element in enumerate(self.uilt):
+                element.set_position((self.margin // 2, self.margin // 2 + (self.margin // 2 + elementHeight) * (index)))
+                element.set_dimensions((elementWidth, elementHeight))
+    
+            for index, element in enumerate(self.uirb):
+                element.set_position((self.width - self.margin // 2 - elementWidth, self.margin // 2 + (self.margin // 2 + elementHeight) * (index)))
+                element.set_dimensions((elementWidth, elementHeight))
+    
+        else:
+            elementWidth = (self.width - self.margin * 2.5) // 4
+            elementHeight = (self.height - self.margin * 2 - self.contentHeight) // 2
+
+            for index, element in enumerate(self.uilt):
+                element.set_position((self.margin // 2 + (self.margin // 2 + elementWidth) * (index), self.margin // 2))
+                element.set_dimensions((elementWidth, elementHeight))
+
+            for index, element in enumerate(self.uirb):
+                element.set_position((self.margin // 2 + (self.margin // 2 + elementWidth) * (index), self.height - self.margin // 2 - elementHeight))
+                element.set_dimensions((elementWidth, elementHeight))
+
+    def drawContent(self):
+        self.screen.blit(pg.transform.scale(self.content, self.contentSize), self.contentPos)
 
 class Game:
     def __init__(self, clients, sizes, colours, gridSize):
@@ -211,9 +267,10 @@ class Game:
         if living <= 2:
             return self.metrics()
 
-    def draw(self, grid):
+    def draw(self, content):
+        arr = pg.surfarray.pixels3d(content)
         for swarm in self.swarms:
-            swarm.draw(grid)
+            swarm.draw(arr)
 
     def metrics(self):
         n = len(self.swarms)
