@@ -326,11 +326,13 @@ function paletteAt(t, stops) {
   return mixRgb(cols[i], cols[i + 1], u - i);
 }
 
-function clipPlotBox(ctx, box) {
+function clipPlotBox(ctx, box, radius) {
   if (!box || box.w <= 0 || box.h <= 0) return;
-  const r = Math.min(16, box.w * 0.06, box.h * 0.06);
+  const r = radius == null
+    ? Math.min(16, box.w * 0.06, box.h * 0.06)
+    : Math.max(0, radius);
   ctx.beginPath();
-  if (typeof ctx.roundRect === "function") ctx.roundRect(box.x, box.y, box.w, box.h, r);
+  if (r > 0 && typeof ctx.roundRect === "function") ctx.roundRect(box.x, box.y, box.w, box.h, r);
   else ctx.rect(box.x, box.y, box.w, box.h);
   ctx.clip();
 }
@@ -656,6 +658,7 @@ class ContourPlot {
     this.rows = this.fixedRows || 48;
     this.levels = (opts && opts.levels) || 12;
     this.basePad = (opts && opts.pad) || { t: 10, r: 10, b: 10, l: 10 };
+    this.clipRadius = opts && "clipRadius" in opts ? opts.clipRadius : null;
     this.z = null;
     this.zMin = 0;
     this.zMax = 1;
@@ -793,7 +796,7 @@ class ContourPlot {
     const cellH = box.h / rows;
     const span = zMax - zMin || 1;
     ctx.save();
-    clipPlotBox(ctx, box);
+    clipPlotBox(ctx, box, this.clipRadius);
     const stops = demoStops();
     const ground = mixRgb([16, 18, 24], stops[0], 0.22);
     ctx.fillStyle = cssRgb(ground);

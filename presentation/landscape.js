@@ -7,11 +7,12 @@ function landscapeHeight(noise, c, px, py, octaves) {
 
 function landscapeTileWorld(c, vis, overlapPx, cssW, index) {
   const overlapWorld = (overlapPx / cssW) * vis;
+  const yBias = c.yBias || 0;
   return {
     x0: c.xMin + index * vis - overlapWorld,
     x1: c.xMin + (index + 1) * vis + overlapWorld,
-    y0: c.yMin,
-    y1: c.yMax
+    y0: c.yMin + yBias,
+    y1: c.yMax + yBias
   };
 }
 

@@ -54,6 +54,24 @@ const CONFIG = {
     panPush:0.8
   },
 
+  poster: {
+    // Shared HSL chroma and lightness for title (and poster seekers).
+    // sat: 0 = grey, 1 = full hue. light: 0 = black, 1 = white.
+    sat: 0.70,
+    light: 0.55,
+    // Poster demo trails only — keep seekers readable on the contour field.
+    trailLight: 0.82,
+    ink: {
+      rock: { h: 5 },
+      paper: { h: 216 },
+      scissors: { h: 146 },
+      swarms: { h: 60, light: 1 },
+      genes: { h: 300, light: 1 },
+      // Brick / maroon sits darker than the rest.
+      mountains: { h: 5, light: 1 }
+    }
+  },
+
   agents: {
     count: 2,
     t1: 4,

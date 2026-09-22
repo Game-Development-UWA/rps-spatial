@@ -16,6 +16,7 @@ class TerrainField {
     this.screenPxH = 0;
     this.tiles = new Map();
     this.panBiasWorld = 0;
+    this.panBiasY = 0;
     this.hintBias = 0;
     this.slideCount = 1;
     this.panPush = 0.8;
@@ -128,6 +129,10 @@ class TerrainField {
     this.rows = Math.min(80, Math.max(32, Math.round(this.cssH / config.cellPx)));
     this.nx = this.cols + 1;
     this.zScratch = new Float32Array(this.nx * (this.rows + 1));
+    this.rebuildTiles();
+  }
+
+  rebuildTiles() {
     this.tiles.forEach((tile) => this.disposeTile(tile));
     this.tiles.clear();
     this.queued.clear();
@@ -152,7 +157,7 @@ class TerrainField {
     const c = this.config;
     return {
       px: x * c.worldScale + seconds * c.panSpeed + this.panBiasWorld * c.worldScale,
-      py: y * c.worldScale
+      py: (y + this.panBiasY) * c.worldScale
     };
   }
 
@@ -160,7 +165,7 @@ class TerrainField {
     const c = this.config;
     return {
       x: (px - seconds * c.panSpeed) / c.worldScale - this.panBiasWorld,
-      y: py / c.worldScale
+      y: py / c.worldScale - this.panBiasY
     };
   }
 
@@ -181,6 +186,13 @@ class TerrainField {
 
   setPanBias(world) {
     this.panBiasWorld = world;
+  }
+
+  setPanBiasY(world) {
+    if (world === this.panBiasY) return;
+    this.panBiasY = world;
+    this.config.yBias = world;
+    this.rebuildTiles();
   }
 
   hintPanBias(world) {

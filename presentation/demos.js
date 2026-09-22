@@ -1150,11 +1150,20 @@ class ExploreDemo {
 class SADemo {
   constructor(panel) {
     this.view = new PanelView(panel, []);
-    this.plot = new ContourPlot(this.view, designedJ, { levels: 12 });
-    this.meter = document.createElement("canvas");
-    this.meter.className = "sa-meter";
-    panel.appendChild(this.meter);
-    this.mctx = this.meter.getContext("2d");
+    const flush = panel.hasAttribute("data-no-meter");
+    this.plot = new ContourPlot(this.view, designedJ, {
+      levels: 12,
+      pad: flush ? { t: 0, r: 0, b: 0, l: 0 } : undefined,
+      clipRadius: flush ? 0 : undefined
+    });
+    this.meter = null;
+    this.mctx = null;
+    if (!panel.hasAttribute("data-no-meter")) {
+      this.meter = document.createElement("canvas");
+      this.meter.className = "sa-meter";
+      panel.appendChild(this.meter);
+      this.mctx = this.meter.getContext("2d");
+    }
     this.dist = new Neighbourhood("gaussian", 0.18);
     this.pos = { x: 0, y: 0 };
     this.T = 0.55;
@@ -1178,6 +1187,7 @@ class SADemo {
   }
 
   sizeMeter() {
+    if (!this.meter) return;
     const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
     const rect = this.meter.getBoundingClientRect();
     this.meterW = Math.max(1, rect.width);
@@ -1261,6 +1271,7 @@ class SADemo {
   }
 
   drawMeter() {
+    if (!this.mctx) return;
     const ctx = this.mctx;
     const w = this.meterW;
     const h = this.meterH;
@@ -3515,6 +3526,7 @@ function mountDemos(host) {
   const sa = panel("sa");
   const ils = panel("ils");
   if (sa && ils) host.attach(slideOf(sa), new EscapePairDemo(sa, ils));
+  else add("sa", (el) => new SADemo(el));
   add("gwo", (el) => new GwoDemo(el));
   add("geist", (el) => new GeistDemo(el));
   add("es", (el) => new EsDemo(el));

@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Rock Paper Scissors Swarms Genes Mountains</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto+Condensed:ital,wght@1,700;1,900&display=swap">
   <link rel="stylesheet" href="poster.css">
 </head>
 <body>
@@ -12,12 +13,12 @@
     <div class="content">
       <div class="copy">
         <h1><em>
-          ROCK.<br>
-          PAPER.<br>
-          SCISSORS.<br>
-          SWARMS.<br>
-          GENES.<br>
-          MOUNTAINS.
+          <span class="ink-rock">ROCK.</span><br>
+          <span class="ink-paper">PAPER.</span><br>
+          <span class="ink-scissors">SCISSORS.</span><br>
+          <span class="ink-swarms">SWARMS.</span><br>
+          <span class="ink-genes">GENES.</span><br>
+          <span class="ink-mountains">MOUNTAINS.</span>
         </em>
         </h1>
         <p class="subtitle"><em>A gentle tour through optimisation algorithms.</em></p>
@@ -27,10 +28,20 @@
         <img class="logo gd" src="logos/gd.png" alt="UWAC Game Development">
       </div>
       <div class="images">
-        <div class="slot image">Image</div>
-        <div class="slot image">Image</div>
+        <div class="slot demo">
+          <div class="demo-panel" data-demo="sa" data-no-meter></div>
+          <div class="slot-bar">Parameters</div>
+        </div>
+        <svg class="images-arrow" viewBox="0 0 88 32" aria-hidden="true">
+          <line x1="2" y1="16" x2="68" y2="16" />
+          <polygon points="86,16 64,5 64,27" />
+        </svg>
+        <div class="slot image">
+          <img src="RPS demo.png" alt="Rock Paper Scissors spatial swarm">
+          <div class="slot-bar">Gameplay</div>
+        </div>
       </div>
-      <p class="event">Wednesday 1 OCT, 16:00 – 18:00 <br>EZONE SOCIAL</p>
+      <p class="event">Wednesday 30 SEP, 12:00 – 14:00 <br>Giumelli Learning Studio 4</p>
     </div>
   </article>
   <script src="config.js"></script>
@@ -38,7 +49,9 @@
   <script src="contours.js"></script>
   <script src="landscape.js"></script>
   <script src="field.js"></script>
-  <script src="agents.js"></script>
+  <script src="plots.js"></script>
+  <script src="demos.js"></script>
   <script src="poster.js"></script>
 </body>
 </html>
+  
