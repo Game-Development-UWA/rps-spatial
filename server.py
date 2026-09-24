@@ -59,14 +59,16 @@ def print_scores(population, scores, title='final scores'):
 class Swarm:
     def __init__(self, population, gridSize, client, colour):
         flat = np.random.choice(gridSize[0] * gridSize[1], size=population, replace=False)
-        xs = flat % gridSize[1]
-        ys = flat // gridSize[1]
-        self.gridSize = gridSize
+        xs = flat % gridSize[0]
+        ys = flat // gridSize[0]
+        self.gridSize = np.array(gridSize)
         self.positions = np.column_stack((xs, ys))
         self.velocities = np.zeros((population, 2), dtype=int)
         self.client = client
         self.colour = np.asarray(colour, dtype=np.uint8)
         self.kills = 0
+        # Pre-allocate state tracking buffer
+        self._cell_to_agent = np.full(gridSize[0] * gridSize[1], -1, dtype=np.int32)
 
     def getResponse(self, preyposes, predposes):
         if self.positions.size == 0:
@@ -82,131 +84,347 @@ class Swarm:
     def step(self):
         if self.positions.size == 0:
             return
-
-        self.positions += self.velocities
-
-        while True:
-            mask = (np.clip(self.positions, 0, self.gridSize[0] - 1) != self.positions)
-            self.positions -= self.velocities * mask
-            self.velocities *= 1 - mask
+    
+        width, height = self.gridSize
+        targets = self.positions + self.velocities
+        total_cells = width * height
+    
+        # 1. OOB mask
+        oob_mask = (
+            (targets[:, 0] < 0) | (targets[:, 0] >= width) |
+            (targets[:, 1] < 0) | (targets[:, 1] >= height)
+        )
+    
+        flat_pos = self.positions[:, 1] * width + self.positions[:, 0]
+        flat_targets = targets[:, 1] * width + targets[:, 0]
+        valid_targets = np.where(oob_mask, -1, flat_targets)
+        counts = np.bincount(valid_targets[valid_targets >= 0], minlength=total_cells)
         
-            flat_positions = self.positions[:, 1] * self.gridSize[0] + self.positions[:, 0]
-            _, inverse, counts = np.unique(flat_positions, return_inverse=True, return_counts=True)
-        
-            if not np.any(counts > 1):
-                break
-        
-            mask = (counts[inverse] > 1).astype(int).reshape(-1, 1)
-        
-            self.positions -= self.velocities * mask
-            self.velocities *= 1 - mask
+        # 3. Initial blockers
+        contention_mask = np.zeros(len(self.positions), dtype=bool)
+        valid_indices = np.where(~oob_mask)[0]
+        contention_mask[valid_indices] = counts[valid_targets[valid_indices]] > 1
+        blocked_mask = oob_mask | contention_mask
+    
+        # 4. Map target cell -> agent ID using flat integer array instead of Python dict
+        valid_agents = np.where(~blocked_mask)[0]
+        valid_flat_targets = flat_targets[valid_agents]
+        self._cell_to_agent[valid_flat_targets] = valid_agents
+    
+        # 5. Cascade blocks backward along collision chains
+        queue = [flat_pos[i] for i in np.where(blocked_mask)[0]]
+        while queue:
+            blocked_cell = queue.pop()
+            agent_id = self._cell_to_agent[blocked_cell]
+            if agent_id != -1:
+                self._cell_to_agent[blocked_cell] = -1  # Remove visited agent
+                blocked_mask[agent_id] = True
+                queue.append(flat_pos[agent_id])
+    
+        self._cell_to_agent[valid_flat_targets] = -1
+        # 6. Apply updates
+        self.positions = np.where(blocked_mask[:, None], self.positions, targets)
+        self.velocities[blocked_mask] = 0
 
     def draw(self, grid):
         xs, ys = self.positions[:, 0], self.positions[:, 1]
         grid[xs, ys] = self.colour
 
+class ClientSettingsWindow(pgui.elements.UIWindow):
+    """Dynamically sized pop-up window with explicit parameter labels and inputs."""
+    def __init__(self, manager, class_name, cls, callback, screen_size):
+        self.callback = callback
+        self.class_name, self.cls = class_name, cls
+        self.entries = {}
+
+        sig = inspect.signature(cls.__init__)
+        valid_params = [
+            (name, param) for name, param in sig.parameters.items()
+            if name not in ('self', 'gridSize', 'grid_size', 'gridsize', 'args', 'kwargs')
+        ]
+
+        win_w = 340
+        win_h = max(200, 60 + len(valid_params) * 42 + 55)
+        center_pos = ((screen_size[0] - win_w) // 2, (screen_size[1] - win_h) // 2)
+
+        super().__init__(
+            pg.Rect(center_pos, (win_w, win_h)),
+            manager, window_display_title=f"Configure: {class_name}"
+        )
+
+        y = 10
+        if not valid_params:
+            pgui.elements.UILabel(pg.Rect(15, y, 280, 30), "No customizable parameters.", manager, container=self)
+            y += 40
+        else:
+            for name, param in valid_params:
+                pgui.elements.UILabel(pg.Rect(15, y, 120, 30), f"{name}:", manager, container=self)
+                entry = pgui.elements.UITextEntryLine(pg.Rect(140, y, 155, 30), manager, container=self)
+                if param.default != inspect.Parameter.empty:
+                    entry.set_text(str(param.default))
+
+                self.entries[name] = entry
+                y += 42
+
+        self.btn_confirm = pgui.elements.UIButton(
+            pg.Rect(15, y + 10, 280, 35), "Confirm & Add Client", manager, container=self
+        )
+
+    def process_event(self, event):
+        handled = super().process_event(event)
+        if event.type == pgui.UI_BUTTON_PRESSED and event.ui_element == self.btn_confirm:
+            kwargs = {}
+            for name, entry in self.entries.items():
+                val = entry.get_text().strip()
+                if val:
+                    try:
+                        kwargs[name] = float(val) if '.' in val else int(val)
+                    except ValueError:
+                        kwargs[name] = val in ("True", "true") if val.lower() in ("true", "false") else val
+            
+            self.callback(self.class_name, self.cls, kwargs)
+            self.kill()
+            return True
+        return handled
+
 class Gui:
     def __init__(self):
         pg.init()
+        self.width, self.height = WINDOWSIZE
         self.screen = pg.display.set_mode(WINDOWSIZE, pg.RESIZABLE)
         pg.display.set_caption("Rock Paper Scissors Simulation")
         self.clock = pg.time.Clock()
-        self.content = pg.Surface(GRIDSIZE)
+        self.manager = pgui.UIManager(WINDOWSIZE)
+        
         self.gridWidth, self.gridHeight = self.gridSize = GRIDSIZE
-        self.width, self.height = WINDOWSIZE
+        self.content = pg.Surface(self.gridSize)
         self.margin = MARGIN * 2
         self.stepTime = (1 / SPS if SPS else 0)
 
-        self.manager = pgui.UIManager((800, 800))
-
-        self.uilt = [
-                pgui.elements.UIButton(relative_rect = pg.Rect((0, 0), (0, 0)), text="Hello World", manager = self.manager),
-                pgui.elements.UIButton(relative_rect = pg.Rect((0, 0), (0, 0)), text="Hello World", manager = self.manager),
-                pgui.elements.UIButton(relative_rect = pg.Rect((0, 0), (0, 0)), text="Hello World", manager = self.manager),
-                pgui.elements.UIButton(relative_rect = pg.Rect((0, 0), (0, 0)), text="Hello World", manager = self.manager),
-                ]
-
-        self.uirb = [
-                pgui.elements.UIButton(relative_rect = pg.Rect((0, 0), (0, 0)), text = "Start Game", manager = self.manager),
-                pgui.elements.UIButton(relative_rect = pg.Rect((0, 0), (0, 0)), text = "Start Tournament", manager = self.manager),
-                pgui.elements.UIButton(relative_rect = pg.Rect((0, 0), (0, 0)), text = "Start Train", manager = self.manager),
-                pgui.elements.UIButton(relative_rect = pg.Rect((0, 0), (0, 0)), text = "Hello World", manager = self.manager),
-                ]
-
+        self.available_classes = {
+            "Gaussian": clients.Gaussian,
+            "Simple": clients.Simple,
+            "Simple2": clients.Simple2,
+            "Smple": clients.Smple,
+            "Random": clients.Client,
+        }
+        self.selected_clients = []
         self.process = None
+        self.colors = []
+        
+        # Graphing Variables
+        self.graph_history = []
+        self.max_history = 200
 
+        self.setup_ui()
         self.resize()
 
+    def setup_ui(self):
+        """Sets up the left-hand dedicated Control Panel."""
+        self.panel_width = 320
+        self.panel = pgui.elements.UIPanel(
+            pg.Rect(0, 0, self.panel_width, self.height), 
+            manager=self.manager,
+            anchors={'left': 'left', 'right': 'left', 'top': 'top', 'bottom': 'bottom'}
+        )
+
+        # --- Grid Settings ---
+        pgui.elements.UILabel(pg.Rect(10, 10, 280, 20), "Grid Size (W x H):", self.manager, container=self.panel)
+        self.entry_x = pgui.elements.UITextEntryLine(pg.Rect(10, 30, 135, 30), self.manager, container=self.panel)
+        self.entry_y = pgui.elements.UITextEntryLine(pg.Rect(155, 30, 135, 30), self.manager, container=self.panel)
+        self.entry_x.set_text(str(self.gridWidth)); self.entry_y.set_text(str(self.gridHeight))
+        self.btn_apply = pgui.elements.UIButton(pg.Rect(10, 65, 280, 30), "Apply Grid Size", self.manager, container=self.panel)
+
+        # --- Client Addition ---
+        pgui.elements.UILabel(pg.Rect(10, 105, 280, 20), "Select Client Class:", self.manager, container=self.panel)
+        self.dropdown = pgui.elements.UIDropDownMenu(
+            list(self.available_classes.keys()), list(self.available_classes.keys())[0], 
+            pg.Rect(10, 125, 280, 30), self.manager, container=self.panel
+        )
+        self.btn_add = pgui.elements.UIButton(pg.Rect(10, 160, 280, 32), "Configure & Add", self.manager, container=self.panel)
+
+        # --- Queue Viewer (Dynamically sized in resize) ---
+        self.txt_queue = pgui.elements.UITextBox(
+            "", pg.Rect(10, 200, 280, 200), self.manager, container=self.panel
+        )
+        self.update_queue_display()
+
+        # --- Controls anchored to the bottom of the panel ---
+        bot_anchor = {'left': 'left', 'right': 'left', 'top': 'bottom', 'bottom': 'bottom'}
+        
+        pgui.elements.UILabel(pg.Rect(10, -185, 135, 25), "Graph Steps:", self.manager, container=self.panel, anchors=bot_anchor)
+        self.entry_history = pgui.elements.UITextEntryLine(pg.Rect(155, -185, 135, 30), self.manager, container=self.panel, anchors=bot_anchor)
+        self.entry_history.set_text(str(self.max_history))
+        
+        self.btn_clear = pgui.elements.UIButton(pg.Rect(10, -145, 280, 32), "Clear Entire Queue", self.manager, container=self.panel, anchors=bot_anchor)
+        self.btn_game = pgui.elements.UIButton(pg.Rect(10, -105, 280, 32), "Start Game", self.manager, container=self.panel, anchors=bot_anchor)
+        self.btn_tourn = pgui.elements.UIButton(pg.Rect(10, -70, 280, 32), "Start Tournament", self.manager, container=self.panel, anchors=bot_anchor)
+        self.btn_train = pgui.elements.UIButton(pg.Rect(10, -35, 280, 32), "Start Train", self.manager, container=self.panel, anchors=bot_anchor)
+
+    def instantiate_client(self, cls, grid_size, kwargs):
+        sig = inspect.signature(cls.__init__)
+        call_kwargs = dict(kwargs)
+        grid_param = next((p for p in sig.parameters if p.lower() in ('gridsize', 'grid_size', 'size')), None)
+        if grid_param:
+            call_kwargs[grid_param] = grid_size
+            return cls(**call_kwargs)
+        try:
+            return cls(grid_size, **call_kwargs)
+        except TypeError:
+            return cls(**call_kwargs)
+
+    def add_client_callback(self, name, cls, kwargs):
+        self.selected_clients.append({"name": name, "cls": cls, "kwargs": kwargs})
+        self.update_queue_display()
+
+    def update_queue_display(self):
+        if not self.selected_clients:
+            self.txt_queue.set_text("<b>Queued Clients:</b><br><i>None</i>")
+            return
+            
+        lines = ["<b>Queued Clients:</b>"]
+        for idx, c in enumerate(self.selected_clients):
+            params = ", ".join(f"{k}={v}" for k, v in c['kwargs'].items())
+            # Hyperlink used to trigger removal on click
+            link = f'<a href="rm_{idx}">[X]</a>'
+            lines.append(f"{link} {idx+1}. <b>{c['name']}</b>({params})")
+        self.txt_queue.set_text("<br>".join(lines))
+
+    def resize(self):
+        self.manager.set_window_resolution((self.width, self.height))
+        self.panel.set_dimensions((self.panel_width, self.height))
+        self.txt_queue.set_dimensions((280, max(100, self.height - 400))) # Stretch queue box to fit available vertical space
+
+        # Right side split: Top 65% Simulation, Bottom 35% Graph
+        visual_w = self.width - self.panel_width
+        sim_h = int(self.height * 0.65)
+        
+        self.sim_rect = pg.Rect(self.panel_width, 0, visual_w, sim_h)
+        self.graph_rect = pg.Rect(self.panel_width, sim_h, visual_w, self.height - sim_h)
+
+        # Calculate Simulation Surface Scaling/Centering
+        scale = min((self.sim_rect.width - self.margin) / self.gridWidth, (self.sim_rect.height - self.margin) / self.gridHeight)
+        self.contentSize = (int(self.gridWidth * scale), int(self.gridHeight * scale))
+        self.contentPos = (
+            self.sim_rect.left + (self.sim_rect.width - self.contentSize[0]) // 2,
+            self.sim_rect.top + (self.sim_rect.height - self.contentSize[1]) // 2
+        )
+
+    def draw_graph(self):
+        # Draw Background and Border
+        pg.draw.rect(self.screen, (30, 30, 30), self.graph_rect)
+        pg.draw.rect(self.screen, (100, 100, 100), self.graph_rect, 2)
+
+        if not self.graph_history: return
+
+        # Stack into numpy array of shape (steps, num_graphs)
+        history = np.array(self.graph_history)
+        num_graphs = history.shape[1] if len(history.shape) > 1 else 1
+
+        min_y, max_y = np.min(history), np.max(history)
+        range_y = (max_y - min_y) if max_y != min_y else 1
+
+        pad = 10
+        draw_w = self.graph_rect.width - (pad * 2)
+        draw_h = self.graph_rect.height - (pad * 2)
+
+        for i in range(num_graphs):
+            color = self.colors[i % len(self.colors)] if self.colors else (255, 255, 255)
+            y_data = history[:, i] if len(history.shape) > 1 else history
+
+            points = []
+            for x_idx, y_val in enumerate(y_data):
+                px = self.graph_rect.left + pad + (x_idx / max(1, self.max_history - 1)) * draw_w
+                py = self.graph_rect.bottom - pad - ((y_val - min_y) / range_y) * draw_h
+                points.append((px, py))
+            
+            if len(points) > 1:
+                pg.draw.lines(self.screen, color, False, points, 2)
+
     def run(self):
-        accumulator = 0
+        accumulator = 0.0
         running = True
         while running:
+            dt = self.clock.tick(60) / 1000
+            
             for event in pg.event.get():
-                if event.type == pg.QUIT:
+                if event.type == pg.QUIT: 
                     running = False
-
                 elif event.type == pg.VIDEORESIZE:
                     self.width, self.height = event.w, event.h
                     self.resize()
 
+                # Handle Link Clicks (Remove Client)
+                elif event.type == pgui.UI_TEXT_BOX_LINK_CLICKED:
+                    if event.ui_element == self.txt_queue and event.link_target.startswith("rm_"):
+                        idx = int(event.link_target.split("_")[1])
+                        if 0 <= idx < len(self.selected_clients):
+                            self.selected_clients.pop(idx)
+                            self.update_queue_display()
+
+                # Handle Text Input (Graph Length)
+                elif event.type == pgui.UI_TEXT_ENTRY_FINISHED and event.ui_element == self.entry_history:
+                    try:
+                        self.max_history = max(10, int(self.entry_history.get_text()))
+                    except ValueError: pass
+
                 elif event.type == pgui.UI_BUTTON_PRESSED:
-                    if event.ui_element == self.uirb[0]:
-                        self.process = Game([clients.Gaussian(self.gridSize), clients.Gaussian(self.gridSize), clients.Gaussian(self.gridSize)], [50000, 50000, 50000], generate_colours(3), self.gridSize)
+                    if event.ui_element == self.btn_add:
+                        name = self.dropdown.selected_option
+                        name = name[0] if isinstance(name, tuple) else name
+                        ClientSettingsWindow(
+                            self.manager, name, self.available_classes[name], 
+                            self.add_client_callback, (self.width, self.height)
+                        )
+
+                    elif event.ui_element == self.btn_clear:
+                        self.selected_clients.clear()
+                        self.update_queue_display()
+
+                    elif event.ui_element == self.btn_apply:
+                        try:
+                            self.gridWidth, self.gridHeight = self.gridSize = (int(self.entry_x.get_text()), int(self.entry_y.get_text()))
+                            self.content = pg.Surface(self.gridSize)
+                            self.resize()
+                        except ValueError: pass
+
+                    elif event.ui_element == self.btn_game and self.selected_clients:
+                        instances = [self.instantiate_client(c['cls'], self.gridSize, c['kwargs']) for c in self.selected_clients]
+                        self.colors = generate_colours(len(instances))
+                        self.process = Game(instances, [5000] * len(instances), self.colors, self.gridSize)
+                        self.graph_history.clear()
 
                 self.manager.process_events(event)
 
-            deltatime = self.clock.tick(0) / 1000
-            self.manager.update(deltatime)
-            accumulator += deltatime
-
-            self.screen.fill(pg.color.Color(70, 70, 70))
-            self.manager.draw_ui(self.screen)
+            self.manager.update(dt)
+            accumulator += dt
+            self.screen.fill((50, 50, 50))
 
             if accumulator >= self.stepTime:
-                self.content.fill("Black")
-                try:
-                    self.process.step()
-                    self.process.draw(self.content)
-                except:
-                    pass
-                self.drawContent()
+                if self.process:
+                    try:
+                        out = self.process.step()
+                        self.content.fill("Black")
+                        self.process.draw(self.content)
+                        
+                        # Graph data ingestion
+                        if out is not None and hasattr(out, 'flatten'):
+                            self.graph_history.append(out.flatten())
+                            if len(self.graph_history) > self.max_history:
+                                self.graph_history = self.graph_history[-self.max_history:]
 
+                    except AttributeError: pass
                 accumulator -= self.stepTime
 
+            # Draw Simulation Layer
+            self.screen.blit(pg.transform.scale(self.content, self.contentSize), self.contentPos)
+            
+            # Draw Graph Layer
+            self.draw_graph()
+
+            # Draw UI Layer (Over everything)
+            self.manager.draw_ui(self.screen)
             pg.display.flip()
-
-    def resize(self):
-        self.manager.set_window_resolution((self.width, self.height))
-
-        self.contentWidth, self.contentHeight = self.contentSize = min(self.width - self.margin, self.gridWidth * (self.height - self.margin) / self.gridHeight), min(self.gridHeight * (self.width - self.margin) / self.gridWidth, self.height - self.margin)
-        self.contentX, self.contentY = self.contentPos = self.margin + (self.width - self.margin * 2 - self.contentWidth) // 2, self.margin + (self.height - self.margin * 2 - self.contentHeight) // 2  
-
-        if self.width - self.contentWidth > self.height - self.contentHeight:
-            elementWidth = (self.width - self.margin * 2 - self.contentWidth) // 2
-            elementHeight = (self.height - self.margin * 2.5) // 4
-    
-            for index, element in enumerate(self.uilt):
-                element.set_position((self.margin // 2, self.margin // 2 + (self.margin // 2 + elementHeight) * (index)))
-                element.set_dimensions((elementWidth, elementHeight))
-    
-            for index, element in enumerate(self.uirb):
-                element.set_position((self.width - self.margin // 2 - elementWidth, self.margin // 2 + (self.margin // 2 + elementHeight) * (index)))
-                element.set_dimensions((elementWidth, elementHeight))
-    
-        else:
-            elementWidth = (self.width - self.margin * 2.5) // 4
-            elementHeight = (self.height - self.margin * 2 - self.contentHeight) // 2
-
-            for index, element in enumerate(self.uilt):
-                element.set_position((self.margin // 2 + (self.margin // 2 + elementWidth) * (index), self.margin // 2))
-                element.set_dimensions((elementWidth, elementHeight))
-
-            for index, element in enumerate(self.uirb):
-                element.set_position((self.margin // 2 + (self.margin // 2 + elementWidth) * (index), self.height - self.margin // 2 - elementHeight))
-                element.set_dimensions((elementWidth, elementHeight))
-
-    def drawContent(self):
-        self.screen.blit(pg.transform.scale(self.content, self.contentSize), self.contentPos)
 
 class Game:
     def __init__(self, clients, sizes, colours, gridSize):
@@ -224,9 +442,10 @@ class Game:
         self.n = len(self.swarms)
         self.prey_of = [[(i - d) % n for d in range(1, self.k + 1)] for i in range(n)]
         self.pred_of = [[(i + d) % n for d in range(1, self.k + 1)] for i in range(n)]
+        # Pre-allocate flat grid for O(1) collision lookups
+        self._grid_occupied = np.zeros(gridSize[0] * gridSize[1], dtype=bool)
 
     def step(self):
-
         # Update Swarm Positions
         for i, swarm in enumerate(self.swarms):
             swarm.getResponse(
@@ -235,34 +454,41 @@ class Game:
             )
         for swarm in self.swarms:
             swarm.step()
-
+    
         # Standard elimination
         # 1. Snapshot the board
+        total_cells = self.gridSize[0] * self.gridSize[1]
         keys = [
             swarm.positions[:, 1] * self.gridSize[0] + swarm.positions[:, 0]
             if swarm.positions.size else np.empty(0, dtype=int)
             for swarm in self.swarms
         ]
-
+    
         dead = [np.zeros(len(key), dtype=bool) for key in keys]
-
-        # 2. Resolve every pairing against the snapshot, i eats j.
-        #    the nearest-in-cycle predator claims a shared victim.
+    
+        # 2. Resolve every pairing against the snapshot
         for d in range(1, self.k + 1):
             for i in range(self.n):
                 j = (i - d) % self.n
                 if keys[i].size == 0 or keys[j].size == 0:
                     continue
-                eats = np.isin(keys[j], keys[i]) & ~dead[j]
+                
+                # Mark predator cell positions in boolean array
+                self._grid_occupied[keys[i]] = True
+    
+                # Fast boolean lookup instead of np.isin
+                eats = self._grid_occupied[keys[j]] & ~dead[j]
                 self.swarms[i].kills += int(eats.sum())
                 dead[j] |= eats
 
-        # 3. Apply deletions only once every pairing is resolved
+                self._grid_occupied[keys[i]] = False
+    
+        # 3. Apply deletions
         for swarm, mask in zip(self.swarms, dead):
             if mask.any():
                 swarm.positions = swarm.positions[~mask]
                 swarm.velocities = swarm.velocities[~mask]
-
+    
         living = sum(1 for swarm in self.swarms if swarm.positions.size > 0)
         if living <= 2:
             return self.metrics()
@@ -295,7 +521,6 @@ class Game:
             [swarm.client for swarm in self.swarms],
             colours=[swarm.colour for swarm in self.swarms],
         )
-
 
 class Tournament:
     def __init__(self, population, workers=None):

@@ -1,11 +1,20 @@
 import inspect
-
 import numpy as np
 from scipy.ndimage import gaussian_filter
 
+# 8-neighbour steps only: including (0, 0) freezes units on any local peak.
+_GRAD_DX = np.array([-1, -1, -1,  0, 0,  1, 1, 1], dtype=int)
+_GRAD_DY = np.array([-1,  0,  1, -1, 1, -1, 0, 1], dtype=int)
+
+
 class Client:
-    def __init__(self):
-        pass
+    def __init__(self, gridSize=None):
+        if isinstance(gridSize, (int, float)):
+            self.gridSize = (int(gridSize), int(gridSize))
+        elif gridSize is not None:
+            self.gridSize = (int(gridSize[0]), int(gridSize[1]))
+        else:
+            self.gridSize = None
 
     def __str__(self):
         name = type(self).__name__
@@ -13,7 +22,7 @@ class Client:
         for pname, param in inspect.signature(type(self).__init__).parameters.items():
             if pname == 'self' or param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
                 continue
-            parts.append(f'{pname}={getattr(self, pname)}')
+            parts.append(f'{pname}={getattr(self, pname, None)}')
         if not parts:
             return name
         return f"{name}({', '.join(parts)})"
@@ -22,13 +31,12 @@ class Client:
         return str(self)
 
     def getResponse(self, poses, preyposes, predposes):
-
-        return np.random.randint(- 1, 2, size=(len(poses), 2))
+        return np.random.randint(-1, 2, size=(len(poses), 2))
 
 
 class Simple(Client):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, gridSize=None):
+        super().__init__(gridSize)
 
     def getResponse(self, poses, preyposes, predposes):
         preycentre = np.mean(preyposes, axis=0)
@@ -58,8 +66,8 @@ class Simple(Client):
 
 
 class Smple(Client):
-    def __init__(self, fear):
-        super().__init__()
+    def __init__(self, fear=0.5, gridSize=None):
+        super().__init__(gridSize)
         self.fear = fear
 
     def getResponse(self, poses, preyposes, predposes):
@@ -90,25 +98,30 @@ class Smple(Client):
 
 
 class Simple2(Client):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, gridSize=(1200, 1200)):
+        super().__init__(gridSize)
 
     def _get_nearest_forces(self, poses, targets, is_attraction=True):
         if len(targets) == 0 or len(poses) == 0:
             return np.zeros_like(poses, dtype=float)
 
         forces = np.zeros_like(poses, dtype=float)
+        width, height = self.gridSize if self.gridSize else (1200, 1200)
 
-        # 60px cell size on 1200px grid = 20x20 cell grid
+        # Spatial binning over 2D rectangular grid
         cell_size = 60
-        grid_dim = (GRIDSIZE + cell_size - 1) // cell_size
-        num_cells = grid_dim * grid_dim
+        grid_dim_x = max(1, (width + cell_size - 1) // cell_size)
+        grid_dim_y = max(1, (height + cell_size - 1) // cell_size)
+        num_cells = grid_dim_x * grid_dim_y
 
-        # Map 2D coordinates to 1D cell IDs
-        p_keys = (np.clip(poses[:, 1] // cell_size, 0, grid_dim - 1) * grid_dim
-                  + np.clip(poses[:, 0] // cell_size, 0, grid_dim - 1)).astype(int)
-        t_keys = (np.clip(targets[:, 1] // cell_size, 0, grid_dim - 1) * grid_dim
-                  + np.clip(targets[:, 0] // cell_size, 0, grid_dim - 1)).astype(int)
+        # Map 2D coordinates to 1D spatial hash keys
+        p_x = np.clip(poses[:, 0] // cell_size, 0, grid_dim_x - 1).astype(int)
+        p_y = np.clip(poses[:, 1] // cell_size, 0, grid_dim_y - 1).astype(int)
+        p_keys = p_y * grid_dim_x + p_x
+
+        t_x = np.clip(targets[:, 0] // cell_size, 0, grid_dim_x - 1).astype(int)
+        t_y = np.clip(targets[:, 1] // cell_size, 0, grid_dim_y - 1).astype(int)
+        t_keys = t_y * grid_dim_x + t_x
 
         # Vectorized target bucket sorting via searchsorted
         t_order = np.argsort(t_keys)
@@ -134,13 +147,13 @@ class Simple2(Client):
             p_end = p_cell_ends[cell_key]
             cell_poses = sorted_poses[p_start:p_end]
 
-            cy, cx = divmod(cell_key, grid_dim)
+            cy, cx = divmod(cell_key, grid_dim_x)
 
             # Slice target arrays from the 3x3 neighboring grid cells
             neighbor_slices = []
-            for ny in range(max(0, cy - 1), min(grid_dim, cy + 2)):
-                for nx in range(max(0, cx - 1), min(grid_dim, cx + 2)):
-                    nk = ny * grid_dim + nx
+            for ny in range(max(0, cy - 1), min(grid_dim_y, cy + 2)):
+                for nx in range(max(0, cx - 1), min(grid_dim_x, cx + 2)):
+                    nk = ny * grid_dim_x + nx
                     if cell_starts[nk] < cell_ends[nk]:
                         neighbor_slices.append(sorted_targets[cell_starts[nk]:cell_ends[nk]])
 
@@ -198,11 +211,6 @@ class Simple2(Client):
         return velocities
 
 
-# 8-neighbour steps only: including (0, 0) freezes units on any local peak.
-_GRAD_DX = np.array([-1, -1, -1, 0, 0, 1, 1, 1], dtype=int)
-_GRAD_DY = np.array([-1,  0,  1, -1, 1, -1, 0, 1], dtype=int)
-
-
 class Gaussian(Client):
     """Coarse Gaussian potential: chase prey, flee predators, spread locally.
 
@@ -212,9 +220,9 @@ class Gaussian(Client):
 
     def __init__(
         self,
-        gridSize,
-        prey_weight=0.1,
-        pred_weight=32.0,
+        gridSize=(1200, 1200),
+        prey_weight=1.0,
+        pred_weight=1.0,
         prey_sigma=4.0,
         pred_sigma=4.0,
         swarm_near_weight=0.0,
@@ -224,8 +232,7 @@ class Gaussian(Client):
         cell=2,
         visualize=False,
     ):
-        super().__init__()
-        self.gridSize = gridSize
+        super().__init__(gridSize)
         self.prey_weight = prey_weight
         self.pred_weight = pred_weight
         self.prey_sigma = prey_sigma
@@ -239,20 +246,26 @@ class Gaussian(Client):
         self._init_buffers()
 
     def _init_buffers(self):
-        self._bins = (self.gridSize[0] + self.cell - 1) // self.cell
-        self._last = self._bins - 1  # number of bins - 1, for indexing
-        shape = (self._bins, self._bins)
+        width, height = self.gridSize if self.gridSize else (1200, 1200)
+        self._bins_x = (width + self.cell - 1) // self.cell
+        self._bins_y = (height + self.cell - 1) // self.cell
+        self._last_x = self._bins_x - 1
+        self._last_y = self._bins_y - 1
+        
+        shape = (self._bins_x, self._bins_y)
         self._field = np.zeros(shape, dtype=np.float32)
         self._occupancy = np.zeros(shape, dtype=np.float32)
         self._scratch = np.zeros(shape, dtype=np.float32)
 
     def _bin(self, positions):
-        xs = np.clip(positions[:, 0] // self.cell, 0, self._last).astype(np.intp, copy=False)
-        ys = np.clip(positions[:, 1] // self.cell, 0, self._last).astype(np.intp, copy=False)
+        xs = np.clip(positions[:, 0] // self.cell, 0, self._last_x).astype(np.intp, copy=False)
+        ys = np.clip(positions[:, 1] // self.cell, 0, self._last_y).astype(np.intp, copy=False)
         return xs, ys
 
     def getResponse(self, poses, preyposes, predposes):
         self._field.fill(0)
+        total_bins = self._bins_x * self._bins_y
+
         for positions, sigma, weight in (
             (preyposes, self.prey_sigma, self.prey_weight),
             (predposes, self.pred_sigma, -self.pred_weight),
@@ -262,13 +275,17 @@ class Gaussian(Client):
             if not weight or len(positions) == 0:
                 continue
             xs, ys = self._bin(positions)
+            flat_indices = ys * self._bins_x + xs
 
-            if sigma / self.cell <= 0.35:  # too small to blur, just add weight to exact cell
-                np.add.at(self._field, (xs, ys), weight)
+            if sigma / self.cell <= 0.35:
+                # Fast histogram binning via bincount
+                counts = np.bincount(flat_indices, minlength=self._bins_x * self._bins_y)
+                self._field += counts.reshape((self._bins_y, self._bins_x)).T * weight
                 continue
 
-            self._occupancy.fill(0)
-            np.add.at(self._occupancy, (xs, ys), weight)
+            counts = np.bincount(flat_indices, minlength=self._bins_x * self._bins_y)
+            self._occupancy.flat[:] = counts.reshape((self._bins_y, self._bins_x)).T * weight
+            
             gaussian_filter(
                 self._occupancy,
                 sigma / self.cell,
@@ -284,9 +301,10 @@ class Gaussian(Client):
         xs, ys = self._bin(poses)
         dx = xs[:, None] + _GRAD_DX
         dy = ys[:, None] + _GRAD_DY
-        vals = self._field[np.clip(dx, 0, self._last), np.clip(dy, 0, self._last)].copy()
-        vals[(dx < 0) | (dx > self._last) | (dy < 0) | (dy > self._last)] = -np.inf
-        # plateaus otherwise all pick the first neighbour and pile into a corner
+        
+        vals = self._field[np.clip(dx, 0, self._last_x), np.clip(dy, 0, self._last_y)].copy()
+        vals[(dx < 0) | (dx > self._last_x) | (dy < 0) | (dy > self._last_y)] = -np.inf
+        
         vals += np.random.random(vals.shape).astype(np.float32) * 1e-5
         best = vals.argmax(axis=1)
         return np.column_stack((_GRAD_DX[best], _GRAD_DY[best]))
@@ -300,8 +318,8 @@ class Gaussian(Client):
                 if not pg.get_init():
                     pg.init()
                 self._pg = pg
-                scale = max(4, 600 // self._bins)
-                self._window = Window("Gaussian field", size=(self._bins * scale, self._bins * scale))
+                scale = max(4, 600 // max(self._bins_x, self._bins_y))
+                self._window = Window("Gaussian field", size=(self._bins_x * scale, self._bins_y * scale))
                 self._renderer = Renderer(self._window)
                 self._Texture = Texture
                 self._texture = None
