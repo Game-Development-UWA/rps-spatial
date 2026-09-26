@@ -1,0 +1,873 @@
+import html
+import inspect
+import threading
+import traceback
+
+import numpy as np
+import pygame as pg
+import pygame_gui as pgui
+from pygame_gui.windows import UIMessageWindow
+
+from .. import clients
+from ..catalog import Catalog
+from ..sim.game import Game, generate_colours, legal_match_count
+from ..evolve.gaussian import (
+    GAUSSIAN_DOTS,
+    _limits,
+    candidate_dots,
+    clip_gaussian_params,
+    default_gaussian_params,
+    sample_gaussian_params,
+)
+from ..settings import *
+from ..evolve.train import Train
+
+
+def _graph_font(size):
+    if not pg.font.get_init():
+        pg.font.init()
+    return pg.font.Font(None, size)
+
+
+def _opaque_text(font, text, color=(255, 255, 255), bg=(18, 18, 22)):
+    img = font.render(str(text), True, color, bg)
+    if img.get_flags() & pg.SRCALPHA:
+        opaque = pg.Surface(img.get_size())
+        opaque.fill(bg)
+        opaque.blit(img, (0, 0))
+        return opaque
+    return img
+
+
+def _blit_label(surf, text, pos, font, color=(255, 255, 255), anchor='topleft', bg=(18, 18, 22)):
+    img = _opaque_text(font, text, color, bg)
+    rect = img.get_rect(**{anchor: pos})
+    surf.blit(img, rect)
+    return rect
+
+
+def _scroll(rect, manager, container):
+    try:
+        return pgui.elements.UIScrollingContainer(rect, manager, container=container, allow_scroll_x=False)
+    except TypeError:
+        return pgui.elements.UIScrollingContainer(rect, manager, container=container)
+
+
+def _set_scroll_h(scroll, height, width=270):
+    if hasattr(scroll, 'set_scrollable_area_dimensions'):
+        scroll.set_scrollable_area_dimensions((width, max(height, 80)))
+
+
+def _confirmed(event, button):
+    if event.type == pgui.UI_BUTTON_PRESSED and event.ui_element == button:
+        return True
+    if event.type == pgui.UI_TEXT_ENTRY_FINISHED:
+        return True
+    return event.type == pg.KEYDOWN and event.key in (pg.K_RETURN, pg.K_KP_ENTER)
+
+
+def draw_weight_sigma_graph(surf, candidates, highlight=None, labels=True):
+    """One WEIGHT×SIGMA plot. Each candidate contributes prey / pred / self / sep dots."""
+    surf.fill((18, 18, 22))
+    w, h = surf.get_size()
+    if labels:
+        pad_l, pad_b, pad_r, pad_t = 72, 64, 16, 14
+    else:
+        pad_l, pad_b, pad_r, pad_t = 4, 4, 4, 4
+    plot = pg.Rect(pad_l, pad_t, max(8, w - pad_l - pad_r), max(8, h - pad_t - pad_b))
+    pg.draw.rect(surf, (32, 32, 38), plot)
+    pg.draw.rect(surf, (140, 140, 150), plot, 1)
+
+    (lo_w, hi_w), (lo_s, hi_s), _ = _limits()
+    span_w = hi_w - lo_w or 1.0
+    span_s = hi_s - lo_s or 1.0
+
+    font = _graph_font(26) if labels else None
+    small = _graph_font(22) if labels else None
+
+    def to_px(weight, sigma):
+        x = plot.left + (weight - lo_w) / span_w * plot.width
+        y = plot.bottom - (sigma - lo_s) / span_s * plot.height
+        return int(x), int(y)
+
+    if lo_w < 0 < hi_w:
+        zx, _ = to_px(0.0, lo_s)
+        pg.draw.line(surf, (90, 90, 100), (zx, plot.top), (zx, plot.bottom), 1)
+
+    for i, cand in enumerate(candidates):
+        pts = [to_px(weight, sigma) for _, weight, sigma, _ in cand['dots']]
+        ring = cand.get('colour', (230, 230, 230))
+        if len(pts) >= 2:
+            pg.draw.lines(surf, (*ring[:3],), False, pts, 1)
+        for (_, _w, _s, colour), pos in zip(cand['dots'], pts):
+            r = 8 if labels and i == highlight else (6 if labels else 3)
+            pg.draw.circle(surf, colour, pos, r)
+            pg.draw.circle(surf, (0, 0, 0), pos, r, 1)
+
+    if not labels:
+        return plot
+
+    for frac, val in ((0.0, lo_w), (0.5, 0.5 * (lo_w + hi_w)), (1.0, hi_w)):
+        x = plot.left + frac * plot.width
+        pg.draw.line(surf, (180, 180, 188), (x, plot.bottom), (x, plot.bottom + 5), 2)
+        _blit_label(surf, f'{val:g}', (x, plot.bottom + 8), small, anchor='midtop')
+    for frac, val in ((0.0, lo_s), (0.5, 0.5 * (lo_s + hi_s)), (1.0, hi_s)):
+        y = plot.bottom - frac * plot.height
+        pg.draw.line(surf, (180, 180, 188), (plot.left - 5, y), (plot.left, y), 2)
+        _blit_label(surf, f'{val:g}', (plot.left - 8, y), small, anchor='midright')
+
+    _blit_label(surf, 'WEIGHT', (plot.centerx, h - 6), font, anchor='midbottom')
+    ylab = pg.transform.rotate(_opaque_text(font, 'SIGMA'), 90)
+    surf.blit(ylab, (6, plot.centery - ylab.get_height() // 2))
+
+    lx = plot.left
+    ly = 4
+    for label, _, _, colour in GAUSSIAN_DOTS:
+        pg.draw.circle(surf, colour, (lx + 6, ly + 8), 5)
+        rect = _blit_label(surf, label, (lx + 16, ly + 8), small, anchor='midleft')
+        lx = rect.right + 14
+
+    return plot
+
+
+class ClientSettingsWindow(pgui.elements.UIWindow):
+    """Dynamically sized pop-up window with explicit parameter labels and inputs."""
+    def __init__(self, manager, class_name, cls, callback, screen_size, values=None, confirm_label=None):
+        self.callback = callback
+        self.class_name, self.cls = class_name, cls
+        self.entries = {}
+        values = values or {}
+
+        sig = inspect.signature(cls.__init__)
+        valid_params = [
+            (name, param) for name, param in sig.parameters.items()
+            if name not in ('self', 'gridSize', 'grid_size', 'gridsize', 'args', 'kwargs')
+        ]
+
+        win_w = 340
+        win_h = max(200, 60 + len(valid_params) * 42 + 55)
+        center_pos = ((screen_size[0] - win_w) // 2, (screen_size[1] - win_h) // 2)
+
+        super().__init__(
+            pg.Rect(center_pos, (win_w, win_h)),
+            manager, window_display_title=f"Configure: {class_name}"
+        )
+
+        y = 10
+        if not valid_params:
+            pgui.elements.UILabel(pg.Rect(15, y, 280, 30), "No customizable parameters.", manager, container=self)
+            y += 40
+        else:
+            for name, param in valid_params:
+                pgui.elements.UILabel(pg.Rect(15, y, 120, 30), f"{name}:", manager, container=self)
+                entry = pgui.elements.UITextEntryLine(pg.Rect(140, y, 155, 30), manager, container=self)
+                if name in values:
+                    entry.set_text(str(values[name]))
+                elif param.default != inspect.Parameter.empty:
+                    entry.set_text(str(param.default))
+
+                self.entries[name] = entry
+                y += 42
+
+        self.btn_confirm = pgui.elements.UIButton(
+            pg.Rect(15, y + 10, 280, 35),
+            confirm_label or "Confirm & Add Client",
+            manager, container=self
+        )
+
+    def _confirm(self):
+        if not self.alive():
+            return
+        kwargs = {}
+        for name, entry in self.entries.items():
+            val = entry.get_text().strip()
+            if val:
+                try:
+                    kwargs[name] = float(val) if '.' in val else int(val)
+                except ValueError:
+                    kwargs[name] = val in ("True", "true") if val.lower() in ("true", "false") else val
+        self.callback(self.class_name, self.cls, kwargs)
+        self.kill()
+
+    def process_event(self, event):
+        handled = super().process_event(event)
+        if _confirmed(event, self.btn_confirm):
+            self._confirm()
+            return True
+        return handled
+
+
+class GaussianConfigWindow(pgui.elements.UIWindow):
+    """Single WEIGHT×SIGMA graph: prey / pred / self / sep."""
+
+    def __init__(self, manager, callback, screen_size, params=None, confirm_label=None):
+        self.callback = callback
+        self.params = clip_gaussian_params(params or default_gaussian_params())
+        self.drag = None
+        win_w, win_h = 560, 520
+        center = ((screen_size[0] - win_w) // 2, (screen_size[1] - win_h) // 2)
+        super().__init__(
+            pg.Rect(center, (win_w, win_h)),
+            manager, window_display_title='Configure: Gaussian',
+        )
+        self.plot_size = (532, 390)
+        self.plot_surf = pg.Surface(self.plot_size)
+        self.plot_image = pgui.elements.UIImage(
+            pg.Rect(8, 8, *self.plot_size), self.plot_surf, manager, container=self,
+        )
+        cell_cap = pg.Surface((56, 32))
+        cell_cap.fill((28, 28, 32))
+        _blit_label(cell_cap, 'cell', (28, 16), _graph_font(24), anchor='center', bg=(28, 28, 32))
+        pgui.elements.UIImage(pg.Rect(8, 406, 56, 32), cell_cap, manager, container=self)
+        self.cell_entry = pgui.elements.UITextEntryLine(pg.Rect(68, 406, 72, 32), manager, container=self)
+        self.cell_entry.set_text(str(self.params.get('cell', 2)))
+        self.btn_random = pgui.elements.UIButton(
+            pg.Rect(148, 406, 196, 32), 'initialise random', manager, container=self,
+        )
+        self.btn_confirm = pgui.elements.UIButton(
+            pg.Rect(352, 406, 188, 32), confirm_label or 'Add', manager, container=self,
+        )
+        self.redraw()
+
+    def _randomise(self):
+        self.params = sample_gaussian_params()
+        self.cell_entry.set_text(str(self.params.get('cell', 2)))
+        self.redraw()
+
+    def _confirm(self):
+        if not self.alive():
+            return
+        try:
+            self.params['cell'] = int(self.cell_entry.get_text())
+        except ValueError:
+            pass
+        self.callback('Gaussian', clients.Gaussian, clip_gaussian_params(self.params))
+        self.kill()
+
+    def redraw(self):
+        self.plot_rect = draw_weight_sigma_graph(self.plot_surf, [{
+            'colour': (220, 220, 220),
+            'dots': candidate_dots(self.params),
+        }])
+        self.plot_image.set_image(self.plot_surf.convert())
+
+    def _from_px(self, pos):
+        (lo_w, hi_w), (lo_s, hi_s), _ = _limits()
+        rel = (pos[0] - self.plot_rect.left, pos[1] - self.plot_rect.top)
+        nx = np.clip(rel[0] / max(1, self.plot_rect.width), 0, 1)
+        ny = np.clip(1.0 - rel[1] / max(1, self.plot_rect.height), 0, 1)
+        return lo_w + nx * (hi_w - lo_w), lo_s + ny * (hi_s - lo_s)
+
+    def _local_pos(self, event):
+        img = self.plot_image.get_abs_rect()
+        return event.pos[0] - img.left, event.pos[1] - img.top
+
+    def process_event(self, event):
+        handled = super().process_event(event)
+        if event.type == pgui.UI_BUTTON_PRESSED and event.ui_element == self.btn_random:
+            self._randomise()
+            return True
+        if _confirmed(event, self.btn_confirm):
+            self._confirm()
+            return True
+        if event.type == pg.MOUSEBUTTONDOWN and event.button == 1:
+            local = self._local_pos(event)
+            best, best_d = None, 14 ** 2
+            (lo_w, hi_w), (lo_s, hi_s), _ = _limits()
+            for i, (_, _w, _s, _) in enumerate(candidate_dots(self.params)):
+                px = self.plot_rect.left + (_w - lo_w) / (hi_w - lo_w) * self.plot_rect.width
+                py = self.plot_rect.bottom - (_s - lo_s) / (hi_s - lo_s) * self.plot_rect.height
+                d = (local[0] - px) ** 2 + (local[1] - py) ** 2
+                if d < best_d:
+                    best, best_d = i, d
+            if best is not None:
+                self.drag = best
+                return True
+        elif event.type == pg.MOUSEBUTTONUP and event.button == 1:
+            self.drag = None
+        elif event.type == pg.MOUSEMOTION and self.drag is not None:
+            weight, sigma = self._from_px(self._local_pos(event))
+            _, wkey, skey, _ = GAUSSIAN_DOTS[self.drag]
+            self.params[wkey] = weight
+            self.params[skey] = sigma
+            self.params = clip_gaussian_params(self.params)
+            self.redraw()
+            return True
+        return handled
+
+
+def client_row_height(client):
+    return 48 if client['cls'] is clients.Gaussian else 26
+
+
+def score_bar(score, scores, colour, size):
+    """Filled bar. The current leader fills the width; the last place is an outline."""
+    width, height = size
+    surf = pg.Surface((width, height))
+    surf.fill((22, 22, 26))
+    colour = tuple(int(c) for c in colour[:3])
+    lo, hi = min(scores), max(scores)
+    span = hi - lo
+    frac = 1.0 if span == 0 else (float(score) - lo) / span
+    fill = int(round(frac * (width - 2)))
+    if fill > 0:
+        pg.draw.rect(surf, colour, (1, 1, fill, max(1, height - 2)))
+    pg.draw.rect(surf, colour, (0, 0, width, height), 1)
+    return surf
+
+
+def add_client_preview(container, manager, client, rect, colour=(200, 200, 200)):
+    """Same row body as the set: graph for Gaussian, name otherwise."""
+    if client['cls'] is clients.Gaussian:
+        thumb = pg.Surface(rect.size)
+        draw_weight_sigma_graph(
+            thumb, [{'colour': colour, 'dots': candidate_dots(client['kwargs'])}],
+            labels=False,
+        )
+        return pgui.elements.UIImage(rect, thumb, manager, container=container)
+    params = ", ".join(f"{k}={v}" for k, v in client['kwargs'].items())
+    text = f"{client['name']}" + (f" ({params})" if params else "")
+    return pgui.elements.UILabel(rect, text, manager, container=container)
+
+
+class MatchPickWindow(pgui.elements.UIWindow):
+    """Choose an odd-sized subset (>= 3) when the set has more than three clients."""
+
+    def __init__(self, manager, clients, callback, screen_size):
+        self.callback = callback
+        self.clients = clients
+        list_h = sum(client_row_height(c) + 4 for c in clients) + 8
+        win_w, win_h = 360, min(560, 80 + min(list_h, 360) + 80)
+        center = ((screen_size[0] - win_w) // 2, (screen_size[1] - win_h) // 2)
+        super().__init__(
+            pg.Rect(center, (win_w, win_h)),
+            manager, window_display_title='Select players',
+        )
+        pgui.elements.UILabel(
+            pg.Rect(10, 6, 330, 22),
+            'Choose an odd number of clients (at least 3).',
+            manager, container=self,
+        )
+        self.scroll = _scroll(pg.Rect(8, 32, 336, win_h - 140), manager, self)
+        self.boxes = []
+        y = 4
+        for i, client in enumerate(clients):
+            row_h = client_row_height(client)
+            box = pgui.elements.UICheckBox(
+                pg.Rect(2, y, 22, 22), '',
+                manager, container=self.scroll,
+                initial_state=(i < 3),
+            )
+            self.boxes.append(box)
+            add_client_preview(
+                self.scroll, manager, client, pg.Rect(32, y, 232, row_h),
+            )
+            y += row_h + 4
+        _set_scroll_h(self.scroll, y + 8)
+        self.status = pgui.elements.UILabel(pg.Rect(10, win_h - 100, 330, 22), '', manager, container=self)
+        self.btn_start = pgui.elements.UIButton(
+            pg.Rect(10, win_h - 74, 330, 32), 'Start', manager, container=self,
+        )
+        self._sync()
+
+    def selected(self):
+        return [c for c, box in zip(self.clients, self.boxes) if box.is_checked]
+
+    def _sync(self):
+        n = len(self.selected())
+        ok = legal_match_count(n)
+        self.status.set_text(f'{n} selected' + ('' if ok else ' — need odd count ≥ 3'))
+        if ok:
+            self.btn_start.enable()
+        else:
+            self.btn_start.disable()
+
+    def process_event(self, event):
+        handled = super().process_event(event)
+        if event.type in (pgui.UI_CHECK_BOX_CHECKED, pgui.UI_CHECK_BOX_UNCHECKED):
+            if event.ui_element in self.boxes:
+                self._sync()
+                return True
+        if event.type == pgui.UI_BUTTON_PRESSED and event.ui_element == self.btn_start:
+            chosen = self.selected()
+            if legal_match_count(len(chosen)):
+                self.callback(chosen)
+                self.kill()
+                return True
+        return handled
+
+
+class Gui:
+    def __init__(self):
+        pg.init()
+        self.width, self.height = WINDOWSIZE
+        self.screen = pg.display.set_mode(WINDOWSIZE, pg.RESIZABLE)
+        pg.display.set_caption("Rock Paper Scissors Simulation")
+        self.clock = pg.time.Clock()
+        self.manager = pgui.UIManager(WINDOWSIZE)
+
+        self.gridWidth, self.gridHeight = self.gridSize = GRIDSIZE
+        self.content = pg.Surface(self.gridSize)
+        self.margin = MARGIN * 2
+        self.stepTime = (1 / SPS if SPS else 0)
+
+        self.available_classes = {
+            "Gaussian": clients.Gaussian,
+            "Simple": clients.Simple,
+            "Simple2": clients.Simple2,
+            "Smple": clients.Smple,
+            "Random": clients.Client,
+        }
+        self.catalog = Catalog()
+        self.selected_clients = []
+        self.play_clients = []
+        self.process = None
+        self.colors = []
+        self.trainer = None
+        self.train_candidates = []
+        self._train_lock = threading.Lock()
+        self._train_finished = None
+        self._train_error = None
+        self._train_done = False
+        self._error_window = None
+
+        self.graph_history = []
+        self.match_rows = []
+        self._printed_results = False
+
+        self._reload_set()
+        self.setup_ui()
+        self.resize()
+        self._refresh_game_button()
+
+    def setup_ui(self):
+        self.panel_width = 320
+        self.panel = pgui.elements.UIPanel(
+            pg.Rect(0, 0, self.panel_width, self.height),
+            manager=self.manager,
+            anchors={'left': 'left', 'right': 'left', 'top': 'top', 'bottom': 'bottom'}
+        )
+
+        pgui.elements.UILabel(pg.Rect(10, 10, 280, 20), "Select Client Class:", self.manager, container=self.panel)
+        self.dropdown = pgui.elements.UIDropDownMenu(
+            list(self.available_classes.keys()), list(self.available_classes.keys())[0],
+            pg.Rect(10, 30, 280, 30), self.manager, container=self.panel
+        )
+        self.btn_add = pgui.elements.UIButton(pg.Rect(10, 65, 280, 32), "Configure & Add", self.manager, container=self.panel)
+
+        self.set_scroll = _scroll(pg.Rect(10, 105, 300, 200), self.manager, self.panel)
+        self._set_widgets = []
+        self._set_remove = {}
+        self._set_edit = {}
+        self._score_bars = {}
+        self._set_order_ids = None
+
+        bot_anchor = {'left': 'left', 'right': 'left', 'top': 'bottom', 'bottom': 'bottom'}
+
+        self.btn_clear = pgui.elements.UIButton(pg.Rect(10, -145, 280, 32), "Clear Set", self.manager, container=self.panel, anchors=bot_anchor)
+        self.btn_game = pgui.elements.UIButton(pg.Rect(10, -105, 280, 32), "Start Game", self.manager, container=self.panel, anchors=bot_anchor)
+        self.btn_tourn = pgui.elements.UIButton(pg.Rect(10, -70, 280, 32), "Start Tournament", self.manager, container=self.panel, anchors=bot_anchor)
+        self.btn_train = pgui.elements.UIButton(pg.Rect(10, -35, 280, 32), "Start Train", self.manager, container=self.panel, anchors=bot_anchor)
+        self.update_set_display()
+
+    def instantiate_client(self, cls, grid_size, kwargs):
+        sig = inspect.signature(cls.__init__)
+        call_kwargs = dict(kwargs)
+        grid_param = next((p for p in sig.parameters if p.lower() in ('gridsize', 'grid_size', 'size')), None)
+        if grid_param:
+            call_kwargs[grid_param] = grid_size
+            return cls(**call_kwargs)
+        try:
+            return cls(grid_size, **call_kwargs)
+        except TypeError:
+            return cls(**call_kwargs)
+
+    def _reload_set(self):
+        self.selected_clients = self.catalog.visible_clients(self.available_classes)
+        if hasattr(self, 'set_scroll'):
+            self.update_set_display()
+
+    def add_client_callback(self, name, cls, kwargs):
+        self.catalog.add_genome(name, kwargs)
+        self._reload_set()
+
+    def edit_client_callback(self, idx, name, cls, kwargs):
+        if not (0 <= idx < len(self.selected_clients)):
+            return
+        gid = self.selected_clients[idx].get('id')
+        if gid:
+            self.catalog.update_genome(gid, name, kwargs)
+        else:
+            self.catalog.add_genome(name, kwargs)
+        self._reload_set()
+
+    def _open_client_config(self, idx, adding=False):
+        if adding:
+            name = self.dropdown.selected_option
+            name = name[0] if isinstance(name, tuple) else name
+            cls = self.available_classes[name]
+            callback = self.add_client_callback
+            kwargs = None
+            confirm = None
+        else:
+            if not (0 <= idx < len(self.selected_clients)):
+                return
+            client = self.selected_clients[idx]
+            name, cls, kwargs = client['name'], client['cls'], client['kwargs']
+            callback = lambda n, c, k, i=idx: self.edit_client_callback(i, n, c, k)
+            confirm = 'Save'
+        if cls is clients.Gaussian:
+            GaussianConfigWindow(
+                self.manager, callback, (self.width, self.height),
+                params=kwargs, confirm_label=confirm,
+            )
+        else:
+            ClientSettingsWindow(
+                self.manager, name, cls, callback, (self.width, self.height),
+                values=kwargs, confirm_label=confirm,
+            )
+
+    def _refresh_game_button(self):
+        if not hasattr(self, 'btn_game'):
+            return
+        if self.process:
+            self.btn_game.set_text('Stop Game')
+            self.btn_game.enable()
+            return
+        self.btn_game.set_text('Start Game')
+        if len(self.selected_clients) < 3:
+            self.btn_game.disable()
+        else:
+            self.btn_game.enable()
+
+    def _request_start_game(self):
+        n = len(self.selected_clients)
+        if n < 3:
+            return
+        if n == 3:
+            self._start_game(self.selected_clients)
+            return
+        MatchPickWindow(
+            self.manager, self.selected_clients, self._start_game, (self.width, self.height),
+        )
+
+    def _start_game(self, roster=None):
+        roster = list(roster or self.selected_clients)
+        if not legal_match_count(len(roster)):
+            return
+        self.play_clients = roster
+        instances = [self.instantiate_client(c['cls'], self.gridSize, c['kwargs']) for c in roster]
+        self.colors = generate_colours(len(instances))
+        self.process = Game(instances, [SWARMSIZE] * len(instances), self.colors, self.gridSize)
+        self.graph_history.clear()
+        self.match_rows = self.process.metrics()
+        self._printed_results = False
+        self.trainer = None
+        with self._train_lock:
+            self.train_candidates = []
+        self.update_set_display()
+
+    def _stop_game(self):
+        self.process = None
+        self.colors = []
+        self.play_clients = []
+        self.match_rows = []
+        self.update_set_display()
+
+    def _report_error(self, exc):
+        if self._error_window is not None and self._error_window.alive():
+            return
+        detail = html.escape(''.join(traceback.format_exception(exc))).replace('\n', '<br>')
+        w, h = min(640, max(280, self.width - 80)), min(360, max(180, self.height - 80))
+        rect = pg.Rect((self.width - w) // 2, (self.height - h) // 2, w, h)
+        self._error_window = UIMessageWindow(
+            rect, detail, self.manager, window_title=type(exc).__name__,
+        )
+
+    def _run_train(self):
+        best = None
+        error = None
+        try:
+            while self.trainer and not self.trainer.done:
+                cands = self.trainer.step()
+                with self._train_lock:
+                    self.train_candidates = cands
+            if self.trainer:
+                best = clip_gaussian_params(self.trainer.best())
+        except Exception as exc:
+            error = exc
+        finally:
+            self._train_finished = best
+            self._train_error = error
+            self._train_done = True
+
+    def _finish_train(self):
+        best = self._train_finished
+        error = self._train_error
+        self._train_finished = None
+        self._train_error = None
+        self._train_done = False
+        self.trainer = None
+        self.btn_train.enable()
+        if error is not None:
+            self._report_error(error)
+            return
+        if best is not None:
+            self.catalog.add_genome('Gaussian', best)
+            self._reload_set()
+
+    def _score_by_id(self):
+        if not self.process:
+            return {}
+        scores = {}
+        for row in self.match_rows:
+            slot = int(row['swarm'])
+            if slot < len(self.play_clients):
+                gid = self.play_clients[slot].get('id')
+                if gid is not None:
+                    scores[gid] = float(row['score'])
+        return scores
+
+    def _colour_by_id(self):
+        return {
+            client.get('id'): colour
+            for client, colour in zip(self.play_clients, self.colors)
+            if client.get('id') is not None
+        } if self.process else {}
+
+    def _display_order(self):
+        scores = self._score_by_id()
+        if not scores:
+            return list(enumerate(self.selected_clients))
+        playing, rest = [], []
+        for idx, client in enumerate(self.selected_clients):
+            if client.get('id') in scores:
+                playing.append((idx, client))
+            else:
+                rest.append((idx, client))
+        playing.sort(key=lambda item: (-scores[item[1]['id']], item[0]))
+        return playing + rest
+
+    def _sync_set(self):
+        order = [client.get('id') for _, client in self._display_order()]
+        if order != self._set_order_ids:
+            self.update_set_display()
+            return
+        self._paint_score_bars()
+
+    def _paint_score_bars(self):
+        scores = self._score_by_id()
+        if not scores:
+            return
+        colours = self._colour_by_id()
+        values = list(scores.values())
+        for gid, image in self._score_bars.items():
+            if gid not in scores or not image.alive():
+                continue
+            image.set_image(score_bar(
+                scores[gid], values, colours.get(gid, (200, 200, 200)), image.image.get_size(),
+            ).convert())
+
+    def update_set_display(self):
+        for widget in self._set_widgets:
+            widget.kill()
+        self._set_widgets = []
+        self._set_remove = {}
+        self._set_edit = {}
+        self._score_bars = {}
+        y = 4
+        if not self.selected_clients:
+            empty = pgui.elements.UILabel(
+                pg.Rect(4, y, 250, 24), "Set: none", self.manager, container=self.set_scroll
+            )
+            self._set_widgets.append(empty)
+            _set_scroll_h(self.set_scroll, 80)
+            self._set_order_ids = []
+            self._refresh_game_button()
+            return
+        scores = self._score_by_id()
+        colours = self._colour_by_id()
+        values = list(scores.values())
+        bar_w = 56
+        body_w = 168 if scores else 232
+        for idx, client in self._display_order():
+            btn = pgui.elements.UIButton(
+                pg.Rect(2, y, 26, 26), "X", self.manager, container=self.set_scroll
+            )
+            self._set_remove[btn] = idx
+            self._set_widgets.append(btn)
+            gid = client.get('id')
+            colour = colours.get(gid, (200, 200, 200))
+            row_h = client_row_height(client)
+            preview = add_client_preview(
+                self.set_scroll, self.manager, client, pg.Rect(32, y, body_w, row_h), colour,
+            )
+            self._set_edit[preview] = idx
+            self._set_widgets.append(preview)
+            if gid in scores:
+                bar = pgui.elements.UIImage(
+                    pg.Rect(32 + body_w + 4, y, bar_w, row_h),
+                    score_bar(scores[gid], values, colour, (bar_w, row_h)).convert(),
+                    self.manager, container=self.set_scroll,
+                )
+                self._score_bars[gid] = bar
+                self._set_widgets.append(bar)
+            y += row_h + 4
+        _set_scroll_h(self.set_scroll, y + 8)
+        self._set_order_ids = [client.get('id') for _, client in self._display_order()]
+        self._refresh_game_button()
+
+    def resize(self):
+        self.manager.set_window_resolution((self.width, self.height))
+        self.panel.set_dimensions((self.panel_width, self.height))
+        self.set_scroll.set_dimensions((300, max(100, self.height - 270)))
+
+        visual_w = self.width - self.panel_width
+        sim_h = int(self.height * 0.65)
+        bottom_h = self.height - sim_h
+        overlay = min(bottom_h, visual_w // 3)
+
+        self.sim_rect = pg.Rect(self.panel_width, 0, visual_w, sim_h)
+        self.graph_rect = pg.Rect(self.panel_width, sim_h, max(8, visual_w - overlay), bottom_h)
+        self.overlay_rect = pg.Rect(self.width - overlay, sim_h, overlay, overlay)
+
+        scale = min((self.sim_rect.width - self.margin) / self.gridWidth, (self.sim_rect.height - self.margin) / self.gridHeight)
+        self.contentSize = (int(self.gridWidth * scale), int(self.gridHeight * scale))
+        self.contentPos = (
+            self.sim_rect.left + (self.sim_rect.width - self.contentSize[0]) // 2,
+            self.sim_rect.top + (self.sim_rect.height - self.contentSize[1]) // 2
+        )
+
+    def _playing_gaussian_candidates(self):
+        if not self.process:
+            return []
+        out = []
+        for client, colour in zip(self.play_clients, self.colors):
+            if client['cls'] is clients.Gaussian:
+                out.append({'colour': colour, 'dots': candidate_dots(client['kwargs'])})
+        return out
+
+    def draw_graph(self):
+        pg.draw.rect(self.screen, (30, 30, 30), self.graph_rect)
+        pg.draw.rect(self.screen, (100, 100, 100), self.graph_rect, 2)
+
+        if self.graph_history:
+            history = np.asarray(self.graph_history, dtype=np.float32)
+            num_graphs = history.shape[1] if history.ndim > 1 else 1
+            min_y, max_y = 0.0, float(np.max(history))
+            range_y = (max_y - min_y) if max_y != min_y else 1.0
+            pad = 10
+            draw_w = self.graph_rect.width - (pad * 2)
+            draw_h = self.graph_rect.height - (pad * 2)
+            span = max(1, MAX_STEPS - 1)
+            for i in range(num_graphs):
+                color = self.colors[i % len(self.colors)] if self.colors else (255, 255, 255)
+                y_data = history[:, i] if history.ndim > 1 else history
+                points = []
+                for x_idx, y_val in enumerate(y_data):
+                    px = self.graph_rect.left + pad + (x_idx / span) * draw_w
+                    py = self.graph_rect.bottom - pad - ((float(y_val) - min_y) / range_y) * draw_h
+                    points.append((int(px), int(py)))
+                if len(points) > 1:
+                    pg.draw.lines(self.screen, tuple(int(c) for c in color[:3]), False, points, 2)
+
+        pg.draw.rect(self.screen, (30, 30, 30), self.overlay_rect)
+        pg.draw.rect(self.screen, (100, 100, 100), self.overlay_rect, 2)
+        with self._train_lock:
+            train_cands = list(self.train_candidates)
+        overlay_cands = train_cands or self._playing_gaussian_candidates()
+        if overlay_cands:
+            plot = self.screen.subsurface(self.overlay_rect.inflate(-4, -4))
+            draw_weight_sigma_graph(plot, overlay_cands, labels=False)
+
+    def _frame(self, dt, accumulator):
+        for event in pg.event.get():
+            if event.type == pg.QUIT:
+                return False, accumulator
+            if event.type == pg.VIDEORESIZE:
+                self.width, self.height = event.w, event.h
+                self.resize()
+
+            elif event.type == pg.MOUSEBUTTONDOWN and event.button == 1:
+                for widget, idx in self._set_edit.items():
+                    if widget.alive() and widget.get_abs_rect().collidepoint(event.pos):
+                        self._open_client_config(idx)
+                        break
+
+            elif event.type == pgui.UI_BUTTON_PRESSED and event.ui_element in self._set_remove:
+                idx = self._set_remove[event.ui_element]
+                if 0 <= idx < len(self.selected_clients):
+                    gid = self.selected_clients[idx].get('id')
+                    if gid:
+                        self.catalog.hide(gid)
+                    self._reload_set()
+
+            elif event.type == pgui.UI_BUTTON_PRESSED:
+                if event.ui_element == self.btn_add:
+                    self._open_client_config(0, adding=True)
+
+                elif event.ui_element == self.btn_clear:
+                    self.catalog.hide_visible()
+                    self._reload_set()
+
+                elif event.ui_element == self.btn_game:
+                    if self.process:
+                        self._stop_game()
+                    else:
+                        self._request_start_game()
+
+                elif event.ui_element == self.btn_train and not self.trainer:
+                    self._stop_game()
+                    self.trainer = Train(self.gridSize)
+                    with self._train_lock:
+                        self.train_candidates = self.trainer.candidates()
+                    self.btn_train.disable()
+                    threading.Thread(target=self._run_train, daemon=True).start()
+
+            self.manager.process_events(event)
+
+        self.manager.update(dt)
+        if self._train_done:
+            self._finish_train()
+        accumulator += dt
+        self.screen.fill((50, 50, 50))
+
+        if accumulator >= self.stepTime:
+            if self.process and not self._printed_results:
+                try:
+                    out = self.process.step()
+                    self.content.fill("Black")
+                    self.process.draw(self.content)
+                    self.graph_history.append([
+                        0 if swarm.positions.size == 0 else len(swarm.positions)
+                        for swarm in self.process.swarms
+                    ])
+                    rows = out if out is not None else self.process.metrics()
+                    self.match_rows = rows
+                    self._sync_set()
+                    if out is not None or len(self.graph_history) >= MAX_STEPS:
+                        self.catalog.record_match(
+                            self.play_clients, rows, MAX_STEPS, SWARMSIZE,
+                        )
+                        self._reload_set()
+                        self._printed_results = True
+                except Exception as exc:
+                    self._report_error(exc)
+                    self._printed_results = True
+            accumulator -= self.stepTime
+
+        self.screen.blit(pg.transform.scale(self.content, self.contentSize), self.contentPos)
+        self.draw_graph()
+        self.manager.draw_ui(self.screen)
+        pg.display.flip()
+        return True, accumulator
+
+    def run(self):
+        accumulator = 0.0
+        running = True
+        while running:
+            dt = self.clock.tick(60) / 1000
+            try:
+                running, accumulator = self._frame(dt, accumulator)
+            except Exception as exc:
+                self._report_error(exc)

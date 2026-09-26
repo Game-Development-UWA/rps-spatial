@@ -34,35 +34,15 @@ class Client:
         return np.random.randint(-1, 2, size=(len(poses), 2))
 
 
-class Simple(Client):
-    def __init__(self, gridSize=None):
-        super().__init__(gridSize)
+def _spread(positions):
+    s = np.std(positions, axis=0).mean()
+    return 1.0 if s == 0.0 else s
 
-    def getResponse(self, poses, preyposes, predposes):
-        preycentre = np.mean(preyposes, axis=0)
-        predcentre = np.mean(predposes, axis=0)
 
-        attraction = preycentre - poses
-        repulsion = poses - predcentre
-
-        a = np.linalg.norm(attraction, axis=1, keepdims=True)
-        r = np.linalg.norm(repulsion, axis=1, keepdims=True)
-
-        aspread = np.std(preyposes, axis=0).mean()
-        rspread = np.std(predposes, axis=0).mean()
-
-        aspread = 1.0 if aspread == 0.0 else aspread
-        rspread = 1.0 if rspread == 0.0 else rspread
-
-        # NaN protection because centre's np.mean(empty array) can lead to NaN
-        poses = (np.nan_to_num(attraction / a / a / aspread)
-                 + np.nan_to_num(repulsion / r / r / rspread))
-
-        norms = np.linalg.norm(poses, axis=1, keepdims=True)
-        norms[norms == 0] = 1
-
-        velocities = np.round(poses / norms).astype(int)
-        return velocities
+def _unit_steps(vectors):
+    norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+    norms[norms == 0] = 1
+    return np.round(vectors / norms).astype(int)
 
 
 class Smple(Client):
@@ -71,30 +51,21 @@ class Smple(Client):
         self.fear = fear
 
     def getResponse(self, poses, preyposes, predposes):
-        preycentre = np.mean(preyposes, axis=0)
-        predcentre = np.mean(predposes, axis=0)
-
-        attraction = preycentre - poses
-        repulsion = poses - predcentre
-
+        attraction = np.mean(preyposes, axis=0) - poses
+        repulsion = poses - np.mean(predposes, axis=0)
         a = np.linalg.norm(attraction, axis=1, keepdims=True)
         r = np.linalg.norm(repulsion, axis=1, keepdims=True)
+        # NaN protection: empty-side np.mean is NaN
+        force = (
+            np.nan_to_num((1 - self.fear) * attraction / a / a / _spread(preyposes))
+            + np.nan_to_num(self.fear * repulsion / r / r / _spread(predposes))
+        )
+        return _unit_steps(force)
 
-        aspread = np.std(preyposes, axis=0).mean()
-        rspread = np.std(predposes, axis=0).mean()
 
-        aspread = 1.0 if aspread == 0.0 else aspread
-        rspread = 1.0 if rspread == 0.0 else rspread
-
-        # NaN protection because centre's np.mean(empty array) can lead to NaN
-        poses = (np.nan_to_num((1 - self.fear) * attraction / a / a / aspread)
-                 + np.nan_to_num(self.fear * repulsion / r / r / rspread))
-
-        norms = np.linalg.norm(poses, axis=1, keepdims=True)
-        norms[norms == 0] = 1
-
-        velocities = np.round(poses / norms).astype(int)
-        return velocities
+class Simple(Smple):
+    def __init__(self, gridSize=None):
+        super().__init__(fear=0.5, gridSize=gridSize)
 
 
 class Simple2(Client):
@@ -201,18 +172,13 @@ class Simple2(Client):
         if len(effective_pred) > 0:
             forces += self._get_nearest_forces(poses, effective_pred, is_attraction=False)
 
-        norms = np.linalg.norm(forces, axis=1, keepdims=True)
-        zero_forces = (norms == 0)
-        norms[zero_forces] = 1.0
-
-        velocities = np.round(forces / norms).astype(int)
-        velocities[zero_forces.squeeze()] = 0
-
+        velocities = _unit_steps(forces)
+        velocities[np.linalg.norm(forces, axis=1) == 0] = 0
         return velocities
 
 
 class Gaussian(Client):
-    """Coarse Gaussian potential: chase prey, flee predators, spread locally.
+    """Smoothed field: chase prey, flee predators, spread locally.
 
     Occupancy is binned into `cell`×`cell` world pixels, blurred with scipy,
     then each unit steps toward the neighbouring cell with the highest value.
@@ -222,13 +188,13 @@ class Gaussian(Client):
         self,
         gridSize=(1200, 1200),
         prey_weight=1.0,
-        pred_weight=1.0,
+        pred_weight=1.6,
         prey_sigma=4.0,
-        pred_sigma=4.0,
-        swarm_near_weight=0.0,
-        swarm_far_weight=0.0,
-        swarm_near_sigma=0.0,
-        swarm_far_sigma=0.0,
+        pred_sigma=10.0,
+        self_weight=0.0,
+        self_sigma=0.0,
+        sep_weight=2.0,
+        sep_sigma=1.0,
         cell=2,
         visualize=False,
     ):
@@ -237,10 +203,10 @@ class Gaussian(Client):
         self.pred_weight = pred_weight
         self.prey_sigma = prey_sigma
         self.pred_sigma = pred_sigma
-        self.swarm_near_weight = swarm_near_weight
-        self.swarm_far_weight = swarm_far_weight
-        self.swarm_near_sigma = swarm_near_sigma
-        self.swarm_far_sigma = swarm_far_sigma
+        self.self_weight = self_weight
+        self.self_sigma = self_sigma
+        self.sep_weight = sep_weight
+        self.sep_sigma = sep_sigma
         self.cell = max(1, int(cell))
         self.visualize = visualize
         self._init_buffers()
@@ -251,7 +217,6 @@ class Gaussian(Client):
         self._bins_y = (height + self.cell - 1) // self.cell
         self._last_x = self._bins_x - 1
         self._last_y = self._bins_y - 1
-        
         shape = (self._bins_x, self._bins_y)
         self._field = np.zeros(shape, dtype=np.float32)
         self._occupancy = np.zeros(shape, dtype=np.float32)
@@ -262,49 +227,33 @@ class Gaussian(Client):
         ys = np.clip(positions[:, 1] // self.cell, 0, self._last_y).astype(np.intp, copy=False)
         return xs, ys
 
+    def _deposit(self, positions, sigma, weight):
+        if not weight or len(positions) == 0:
+            return
+        xs, ys = self._bin(positions)
+        counts = np.bincount(ys * self._bins_x + xs, minlength=self._bins_x * self._bins_y)
+        occ = counts.reshape((self._bins_y, self._bins_x)).T * weight
+        if sigma / self.cell <= 0.35:
+            self._field += occ
+            return
+        self._occupancy[:] = occ
+        gaussian_filter(self._occupancy, sigma / self.cell, output=self._scratch, mode='constant', truncate=3.0)
+        self._field += self._scratch
+
     def getResponse(self, poses, preyposes, predposes):
         self._field.fill(0)
-        total_bins = self._bins_x * self._bins_y
-
-        for positions, sigma, weight in (
-            (preyposes, self.prey_sigma, self.prey_weight),
-            (predposes, self.pred_sigma, -self.pred_weight),
-            (poses, self.swarm_near_sigma, self.swarm_near_weight),
-            (poses, self.swarm_far_sigma, self.swarm_far_weight),
-        ):
-            if not weight or len(positions) == 0:
-                continue
-            xs, ys = self._bin(positions)
-            flat_indices = ys * self._bins_x + xs
-
-            if sigma / self.cell <= 0.35:
-                # Fast histogram binning via bincount
-                counts = np.bincount(flat_indices, minlength=self._bins_x * self._bins_y)
-                self._field += counts.reshape((self._bins_y, self._bins_x)).T * weight
-                continue
-
-            counts = np.bincount(flat_indices, minlength=self._bins_x * self._bins_y)
-            self._occupancy.flat[:] = counts.reshape((self._bins_y, self._bins_x)).T * weight
-            
-            gaussian_filter(
-                self._occupancy,
-                sigma / self.cell,
-                output=self._scratch,
-                mode='constant',
-                truncate=3.0,
-            )
-            self._field += self._scratch
-
+        self._deposit(preyposes, self.prey_sigma, self.prey_weight)
+        self._deposit(predposes, self.pred_sigma, -self.pred_weight)
+        self._deposit(poses, self.self_sigma, self.self_weight)
+        self._deposit(poses, self.sep_sigma, -self.sep_weight)
         if self.visualize:
             self._draw_field()
 
         xs, ys = self._bin(poses)
         dx = xs[:, None] + _GRAD_DX
         dy = ys[:, None] + _GRAD_DY
-        
         vals = self._field[np.clip(dx, 0, self._last_x), np.clip(dy, 0, self._last_y)].copy()
         vals[(dx < 0) | (dx > self._last_x) | (dy < 0) | (dy > self._last_y)] = -np.inf
-        
         vals += np.random.random(vals.shape).astype(np.float32) * 1e-5
         best = vals.argmax(axis=1)
         return np.column_stack((_GRAD_DX[best], _GRAD_DY[best]))

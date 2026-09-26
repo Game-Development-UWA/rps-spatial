@@ -1,14 +1,9 @@
-import time
-import clients
-from server import Gui
+from rps.ui.gui import Gui
 
-
-def winner_of(rows):
-    return max(rows, key=lambda row: (row['score'], row['living'], row['kills']))
 
 def main():
-    gui = Gui()
-    gui.run()
+    Gui().run()
+
 
 if __name__ == "__main__":
     main()
