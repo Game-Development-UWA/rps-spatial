@@ -5,11 +5,13 @@ from concurrent.futures import ProcessPoolExecutor
 from heapq import nlargest
 from itertools import combinations
 
-from ..sim.game import play_match
 from ..settings import SAMPLE, SWARMS
+from .game import play_match
 
 
-class Tournament:
+class ParallelBatch:
+    """Run a batch of matches across worker processes."""
+
     def __init__(self, population, workers=None):
         self.population = population
         self.workers = workers or os.cpu_count() or 1
@@ -33,11 +35,11 @@ class Tournament:
 
         workers = max(1, min(self.workers, len(jobs)))
         if workers == 1 or len(jobs) == 1:
-            raw = [Tournament._play(job) for job in jobs]
+            raw = [ParallelBatch._play(job) for job in jobs]
         else:
             ctx = None if sys.platform == 'win32' else mp.get_context('fork')
             with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
-                raw = list(pool.map(Tournament._play, jobs, chunksize=1))
+                raw = list(pool.map(ParallelBatch._play, jobs, chunksize=1))
 
         report, bags = [], [[] for _ in self.population]
         for i, match in enumerate(matches):

@@ -316,6 +316,19 @@ def score_bar(score, scores, colour, size):
     return surf
 
 
+def row_frame(size, fill, border):
+    surf = pg.Surface(size)
+    surf.fill(fill)
+    pg.draw.rect(surf, tuple(int(c) for c in border[:3]), surf.get_rect(), 1)
+    return surf
+
+
+def _tint(colour, amount=0.55):
+    colour = tuple(int(c) for c in colour[:3])
+    base = (36, 36, 42)
+    return tuple(int(base[i] * (1 - amount) + colour[i] * amount) for i in range(3))
+
+
 def add_client_preview(container, manager, client, rect, colour=(200, 200, 200)):
     """Same row body as the set: graph for Gaussian, name otherwise."""
     if client['cls'] is clients.Gaussian:
@@ -460,13 +473,16 @@ class Gui:
         self._set_remove = {}
         self._set_edit = {}
         self._score_bars = {}
+        self._row_frames = {}
         self._set_order_ids = None
+        self._hover_hunter = None
+        self._hover_prey_ids = set()
+        self._hover_colour = (255, 255, 255)
 
         bot_anchor = {'left': 'left', 'right': 'left', 'top': 'bottom', 'bottom': 'bottom'}
 
-        self.btn_clear = pgui.elements.UIButton(pg.Rect(10, -145, 280, 32), "Clear Set", self.manager, container=self.panel, anchors=bot_anchor)
-        self.btn_game = pgui.elements.UIButton(pg.Rect(10, -105, 280, 32), "Start Game", self.manager, container=self.panel, anchors=bot_anchor)
-        self.btn_tourn = pgui.elements.UIButton(pg.Rect(10, -70, 280, 32), "Start Tournament", self.manager, container=self.panel, anchors=bot_anchor)
+        self.btn_clear = pgui.elements.UIButton(pg.Rect(10, -110, 280, 32), "Clear Set", self.manager, container=self.panel, anchors=bot_anchor)
+        self.btn_game = pgui.elements.UIButton(pg.Rect(10, -70, 280, 32), "Start Game", self.manager, container=self.panel, anchors=bot_anchor)
         self.btn_train = pgui.elements.UIButton(pg.Rect(10, -35, 280, 32), "Start Train", self.manager, container=self.panel, anchors=bot_anchor)
         self.update_set_display()
 
@@ -572,6 +588,8 @@ class Gui:
         self.colors = []
         self.play_clients = []
         self.match_rows = []
+        self._hover_hunter = None
+        self._hover_prey_ids = set()
         self.update_set_display()
 
     def _report_error(self, exc):
@@ -655,6 +673,44 @@ class Gui:
             return
         self._paint_score_bars()
 
+    def _frame_style(self, gid):
+        own = self._colour_by_id().get(gid)
+        border = own if own is not None else (110, 110, 118)
+        if gid in self._hover_prey_ids:
+            fill = _tint(self._hover_colour)
+        else:
+            fill = (28, 28, 32)
+        return fill, border
+
+    def _paint_row_frames(self):
+        for gid, image in self._row_frames.items():
+            if not image.alive():
+                continue
+            fill, border = self._frame_style(gid)
+            image.set_image(row_frame(image.image.get_size(), fill, border).convert())
+
+    def _update_prey_hover(self, pos):
+        hunter = None
+        if self.process:
+            for gid, image in self._row_frames.items():
+                if gid not in self._colour_by_id() or not image.alive():
+                    continue
+                if image.get_abs_rect().collidepoint(pos):
+                    hunter = gid
+                    break
+        if hunter == self._hover_hunter:
+            return
+        self._hover_hunter = hunter
+        self._hover_prey_ids = set()
+        self._hover_colour = (255, 255, 255)
+        if hunter is not None:
+            slot = next(i for i, client in enumerate(self.play_clients) if client.get('id') == hunter)
+            self._hover_colour = self.colors[slot]
+            self._hover_prey_ids = {
+                self.play_clients[j].get('id') for j in self.process.prey_of[slot]
+            }
+        self._paint_row_frames()
+
     def _paint_score_bars(self):
         scores = self._score_by_id()
         if not scores:
@@ -675,6 +731,7 @@ class Gui:
         self._set_remove = {}
         self._set_edit = {}
         self._score_bars = {}
+        self._row_frames = {}
         y = 4
         if not self.selected_clients:
             empty = pgui.elements.UILabel(
@@ -688,31 +745,40 @@ class Gui:
         scores = self._score_by_id()
         colours = self._colour_by_id()
         values = list(scores.values())
-        bar_w = 56
-        body_w = 168 if scores else 232
+        pad, card_w, bar_w = 4, 276, 56
+        body_w = 164 if scores else 228
         for idx, client in self._display_order():
-            btn = pgui.elements.UIButton(
-                pg.Rect(2, y, 26, 26), "X", self.manager, container=self.set_scroll
-            )
-            self._set_remove[btn] = idx
-            self._set_widgets.append(btn)
             gid = client.get('id')
             colour = colours.get(gid, (200, 200, 200))
             row_h = client_row_height(client)
+            card_h = row_h + pad * 2
+            fill, border = self._frame_style(gid)
+            frame = pgui.elements.UIImage(
+                pg.Rect(0, y, card_w, card_h),
+                row_frame((card_w, card_h), fill, border).convert(),
+                self.manager, container=self.set_scroll, starting_height=0,
+            )
+            self._row_frames[gid] = frame
+            self._set_widgets.append(frame)
+            btn = pgui.elements.UIButton(
+                pg.Rect(pad + 2, y + pad, 26, 26), "X", self.manager, container=self.set_scroll
+            )
+            self._set_remove[btn] = idx
+            self._set_widgets.append(btn)
             preview = add_client_preview(
-                self.set_scroll, self.manager, client, pg.Rect(32, y, body_w, row_h), colour,
+                self.set_scroll, self.manager, client, pg.Rect(36, y + pad, body_w, row_h), colour,
             )
             self._set_edit[preview] = idx
             self._set_widgets.append(preview)
             if gid in scores:
                 bar = pgui.elements.UIImage(
-                    pg.Rect(32 + body_w + 4, y, bar_w, row_h),
+                    pg.Rect(36 + body_w + 4, y + pad, bar_w, row_h),
                     score_bar(scores[gid], values, colour, (bar_w, row_h)).convert(),
                     self.manager, container=self.set_scroll,
                 )
                 self._score_bars[gid] = bar
                 self._set_widgets.append(bar)
-            y += row_h + 4
+            y += card_h + 4
         _set_scroll_h(self.set_scroll, y + 8)
         self._set_order_ids = [client.get('id') for _, client in self._display_order()]
         self._refresh_game_button()
@@ -720,7 +786,7 @@ class Gui:
     def resize(self):
         self.manager.set_window_resolution((self.width, self.height))
         self.panel.set_dimensions((self.panel_width, self.height))
-        self.set_scroll.set_dimensions((300, max(100, self.height - 270)))
+        self.set_scroll.set_dimensions((300, max(100, self.height - 235)))
 
         visual_w = self.width - self.panel_width
         sim_h = int(self.height * 0.65)
@@ -787,6 +853,9 @@ class Gui:
             if event.type == pg.VIDEORESIZE:
                 self.width, self.height = event.w, event.h
                 self.resize()
+
+            elif event.type == pg.MOUSEMOTION:
+                self._update_prey_hover(event.pos)
 
             elif event.type == pg.MOUSEBUTTONDOWN and event.button == 1:
                 for widget, idx in self._set_edit.items():
