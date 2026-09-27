@@ -10,7 +10,7 @@ from itertools import combinations
 import numpy as np
 import pygame as pg
 
-from .settings import GRIDSIZE, MAX_STEPS, SAMPLE, SWARMS, SWARMSIZE
+from .settings import GRIDSIZE, MAX_STEPS, SWARMS, SWARMSIZE
 
 
 def legal_match_count(n):
@@ -231,7 +231,7 @@ class ParallelBatch:
     def _play(client_list):
         return play_match(client_list)
 
-    def run(self, matches=None, sample=SAMPLE, swarms=SWARMS):
+    def run(self, matches=None, swarms=SWARMS):
         if matches is None:
             if len(self.population) < swarms:
                 raise ValueError(
@@ -240,7 +240,7 @@ class ParallelBatch:
                 )
             matches = list(combinations(range(len(self.population)), swarms))
 
-        jobs = [tuple(self.population[i] for i in match) for match in matches for _ in range(sample)]
+        jobs = [tuple(self.population[i] for i in match) for match in matches]
         if not jobs:
             return {'matches': [], 'scores': [0.0] * len(self.population)}
 
@@ -256,17 +256,12 @@ class ParallelBatch:
                     raw = list(pool.map(ParallelBatch._play, jobs, chunksize=1))
 
         report, bags = [], [[] for _ in self.population]
-        for i, match in enumerate(matches):
-            chunk = raw[i * sample:(i + 1) * sample]
+        for match, trial in zip(matches, raw):
             rows = []
             for slot, cid in enumerate(match):
-                samples = [trial[slot] for trial in chunk]
-                avg = {
-                    key: sum(row[key] for row in samples) / len(samples)
-                    for key in samples[0]
-                }
-                bags[cid].append(avg['score'])
-                rows.append({'id': cid, **avg})
+                row = trial[slot]
+                bags[cid].append(row['score'])
+                rows.append({'id': cid, **row})
             report.append(rows)
 
         scores = [sum(bag) / len(bag) if bag else 0.0 for bag in bags]

@@ -10,7 +10,6 @@ SPS = 0
 SWARMS = 3                  # Swarms per match. Must be odd and >= 3
 SWARMSIZE = 5000             # Initial number of units per swarm
 MAX_STEPS = 400             # Simulation length before metrics are computed
-SAMPLE = 2
 
 # Display Styling
 BACKGROUND = (30, 30, 30)   # Background clear color in RGB format
