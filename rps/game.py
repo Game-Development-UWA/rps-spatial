@@ -3,9 +3,11 @@ import inspect
 import multiprocessing as mp
 import os
 import sys
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+import time
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from heapq import nlargest
 from itertools import combinations
+from multiprocessing import shared_memory
 
 import numpy as np
 import pygame as pg
@@ -67,6 +69,56 @@ def play_match(client_list, gridSize=GRIDSIZE, sizes=SWARMSIZE, colours=None, ma
         if result is not None:
             return result
     return game.metrics()
+
+
+def _paint_tile(tile, game):
+    """Downsample one match into a tile. One pixel can hold many units."""
+    tile.fill(0)
+    span = tile.shape[0]
+    last = span - 1
+    width, height = int(game.gridSize[0]), int(game.gridSize[1])
+    for swarm in game.swarms:
+        pos = swarm.positions
+        if pos.size == 0:
+            continue
+        xs = pos[:, 0] * span // width
+        ys = pos[:, 1] * span // height
+        np.minimum(xs, last, out=xs)
+        np.minimum(ys, last, out=ys)
+        tile[xs, ys] = swarm.colour
+
+
+def _play_visible(job):
+    """Play one match in a worker and publish a small tile of it."""
+    client_list, slot, name, tile, count = job
+    shm = shared_memory.SharedMemory(name=name, track=False)
+    try:
+        view = np.ndarray((count, tile, tile, 3), dtype=np.uint8, buffer=shm.buf)
+        board = view[slot]
+        game = make_game(client_list)
+        _paint_tile(board, game)
+        steps = 0
+        while steps < MAX_STEPS:
+            result = game.step()
+            steps = steps + 1
+            done = result is not None or steps >= MAX_STEPS
+            if done or steps % 2 == 0:
+                _paint_tile(board, game)
+            if done:
+                return game.metrics() if result is None else result
+        return game.metrics()
+    finally:
+        shm.close()
+
+
+def _close_pool(pool, kill):
+    if kill:
+        procs = getattr(pool, '_processes', None) or {}
+        for proc in list(procs.values()):
+            proc.terminate()
+        pool.shutdown(wait=False, cancel_futures=True)
+    else:
+        pool.shutdown(wait=True)
 
 
 class Swarm:
@@ -215,17 +267,17 @@ class Game:
 class ParallelBatch:
     """Run a batch of matches across worker processes.
 
-    Pass on_frame to draw the batch instead of running it headless. The
-    jobs then step together, and the callback receives every game after
-    each step, in job order. A finished match stays in that list and holds
-    its last frame. Processes cannot draw into the window, so this path
-    uses threads.
+    on_frame receives a tile stack, shape (jobs, tile, tile, 3), while the
+    matches run. Workers paint those tiles; the caller only has to show them.
+    tick is called while a headless batch is in progress, so a window can
+    keep handling events. A finished match keeps its last tile.
     """
 
-    def __init__(self, population, workers=None, on_frame=None):
+    def __init__(self, population, workers=None, on_frame=None, tick=None):
         self.population = population
         self.workers = workers or os.cpu_count() or 1
         self.on_frame = on_frame
+        self.tick = tick
 
     @staticmethod
     def _play(client_list):
@@ -246,6 +298,8 @@ class ParallelBatch:
 
         if self.on_frame is not None:
             raw = self._run_visible(jobs)
+        elif self.tick is not None:
+            raw = self._run_pooled(jobs)
         else:
             workers = max(1, min(self.workers, len(jobs)))
             if workers == 1 or len(jobs) == 1:
@@ -267,35 +321,56 @@ class ParallelBatch:
         scores = [sum(bag) / len(bag) if bag else 0.0 for bag in bags]
         return {'matches': report, 'scores': scores}
 
-    def _run_visible(self, jobs):
-        """Step every job together. Each game has its own copied clients."""
-        games = [make_game(job, clone=True) for job in jobs]
-        raw = [None] * len(jobs)
-        active = [True] * len(jobs)
-        steps = [0] * len(jobs)
-        remaining = len(jobs)
-        workers = max(1, min(self.workers, len(jobs)))
-        pool = ThreadPoolExecutor(max_workers=workers) if workers > 1 else None
+    def _await(self, pool, futures, notify):
+        """Wait until every future is done. notify runs between polls."""
+        pending = set(range(len(futures)))
+        raw = [None] * len(futures)
+        kill = True
         try:
-            self.on_frame(games)
-            while remaining:
-                order = [i for i in range(len(games)) if active[i]]
-                if pool is None:
-                    results = [games[i].step() for i in order]
-                else:
-                    futures = [pool.submit(games[i].step) for i in order]
-                    results = [future.result() for future in futures]
-                for i, result in zip(order, results):
-                    steps[i] = steps[i] + 1
-                    if result is not None or steps[i] >= MAX_STEPS:
-                        raw[i] = games[i].metrics() if result is None else result
-                        active[i] = False
-                        remaining = remaining - 1
-                self.on_frame(games)
+            while pending:
+                started = time.perf_counter()
+                notify()
+                still = set()
+                for i in pending:
+                    if futures[i].done():
+                        raw[i] = futures[i].result()
+                    else:
+                        still.add(i)
+                pending = still
+                leftover = (1 / 60) - (time.perf_counter() - started)
+                if pending and leftover > 0:
+                    wait([futures[i] for i in pending], timeout=leftover, return_when=FIRST_COMPLETED)
+            kill = False
+            return raw
         finally:
-            if pool is not None:
-                pool.shutdown(wait=True)
-        return raw
+            _close_pool(pool, kill)
+
+    def _run_pooled(self, jobs):
+        workers = max(1, min(self.workers, len(jobs)))
+        ctx = None if sys.platform == 'win32' else mp.get_context('fork')
+        pool = ProcessPoolExecutor(max_workers=workers, mp_context=ctx)
+        futures = [pool.submit(ParallelBatch._play, job) for job in jobs]
+        return self._await(pool, futures, self.tick or (lambda: time.sleep(0.02)))
+
+    def _run_visible(self, jobs):
+        """Play jobs in worker processes. on_frame sees their latest tiles."""
+        tile = 128
+        count = len(jobs)
+        shm = shared_memory.SharedMemory(create=True, size=count * tile * tile * 3, track=False)
+        try:
+            tiles = np.ndarray((count, tile, tile, 3), dtype=np.uint8, buffer=shm.buf)
+            tiles.fill(0)
+            workers = max(1, min(self.workers, count))
+            ctx = None if sys.platform == 'win32' else mp.get_context('fork')
+            pool = ProcessPoolExecutor(max_workers=workers, mp_context=ctx)
+            futures = [
+                pool.submit(_play_visible, (job, i, shm.name, tile, count))
+                for i, job in enumerate(jobs)
+            ]
+            return self._await(pool, futures, lambda: self.on_frame(tiles))
+        finally:
+            shm.close()
+            shm.unlink()
 
     def fitness(self, results):
         return results['scores']

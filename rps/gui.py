@@ -427,6 +427,44 @@ class MatchPickWindow(pgui.elements.UIWindow):
         return handled
 
 
+class TrainWatchWindow(pgui.elements.UIWindow):
+    """Choose whether training draws the matches."""
+
+    def __init__(self, manager, callback, screen_size):
+        self.callback = callback
+        win_w, win_h = 380, 150
+        center = ((screen_size[0] - win_w) // 2, (screen_size[1] - win_h) // 2)
+        super().__init__(
+            pg.Rect(center, (win_w, win_h)),
+            manager, window_display_title='Train',
+        )
+        pgui.elements.UILabel(
+            pg.Rect(12, 8, 350, 24),
+            'See the games as they play?',
+            manager, container=self,
+        )
+        self.btn_watch = pgui.elements.UIButton(
+            pg.Rect(12, 48, 170, 32), 'Watch gameplay', manager, container=self,
+        )
+        self.btn_skip = pgui.elements.UIButton(
+            pg.Rect(192, 48, 170, 32), 'Skip gameplay', manager, container=self,
+        )
+
+    def process_event(self, event):
+        handled = super().process_event(event)
+        if event.type != pgui.UI_BUTTON_PRESSED:
+            return handled
+        if event.ui_element == self.btn_watch:
+            self.callback(True)
+            self.kill()
+            return True
+        if event.ui_element == self.btn_skip:
+            self.callback(False)
+            self.kill()
+            return True
+        return handled
+
+
 class Gui:
     def __init__(self):
         pg.init()
@@ -456,6 +494,9 @@ class Gui:
         self._error_window = None
         self.optimizer = None
         self._training = False
+        self._watch_games = False
+        self._watch_full_paint = True
+        self._train_prompt = None
         self.train_generation = 0
         self.train_candidates = []
 
@@ -615,11 +656,24 @@ class Gui:
             rect, detail, self.manager, window_title=type(exc).__name__,
         )
 
-    def _start_train(self):
+    def _ask_train(self):
+        if self._train_prompt is not None and self._train_prompt.alive():
+            return
+        self._train_prompt = TrainWatchWindow(
+            self.manager, self._start_train, (self.width, self.height),
+        )
+
+    def _start_train(self, watch):
         self._stop_game()
         self.train_candidates = []
         self.train_generation = 0
-        self.optimizer = Optimizer(self.catalog, visualize=self._show_training_games)
+        self._watch_games = bool(watch)
+        self._watch_full_paint = True
+        self.optimizer = Optimizer(
+            self.catalog,
+            visualize=self._show_training_games if watch else None,
+            tick=None if watch else self._keep_training_alive,
+        )
         self._training = True
         self.btn_add.disable()
         self.btn_clear.disable()
@@ -630,6 +684,7 @@ class Gui:
     def _train_step(self):
         self.train_generation = self.train_generation + 1
         self.btn_train.set_text('Training ' + str(self.train_generation) + '/' + str(self.optimizer.generations))
+        self._watch_full_paint = True
         scores = self.optimizer.step()
         ranked = sorted(scores, key=lambda gid: scores[gid], reverse=True)
         colours = generate_colours(len(ranked))
@@ -824,54 +879,75 @@ class Gui:
             self.sim_rect.top + (self.sim_rect.height - self.contentSize[1]) // 2
         )
 
-    def _draw_game_grid(self, games):
-        """Lay the batch's jobs out in a square. The side is ceil(sqrt(jobs))."""
-        n = len(games)
+    def _draw_game_grid(self, tiles):
+        """Lay job tiles out in a square. The side is ceil(sqrt(jobs))."""
+        n = 0 if tiles is None else len(tiles)
         if n == 0:
+            pg.draw.rect(self.screen, BACKGROUND, self.sim_rect)
             return
+        snap = np.array(tiles, copy=True)
         side = math.ceil(math.sqrt(n))
-        area = self.sim_rect
-        pg.draw.rect(self.screen, BACKGROUND, area)
-        gap = 4
-        span = min(area.width, area.height)
-        tile = max(1, (span - (side + 1) * gap) // side)
-        grid = side * tile + (side + 1) * gap
-        ox = area.left + (area.width - grid) // 2
-        oy = area.top + (area.height - grid) // 2
+        tw = snap.shape[1]
+        th = snap.shape[2]
+        gap = 2
+        span = side * tw + (side + 1) * gap
+        mosaic = np.empty((span, span, 3), dtype=np.uint8)
+        mosaic[:] = BACKGROUND
         for index in range(side * side):
-            row, col = divmod(index, side)
-            cell = pg.Rect(
-                ox + gap + col * (tile + gap),
-                oy + gap + row * (tile + gap),
-                tile, tile,
-            )
-            pg.draw.rect(self.screen, (0, 0, 0), cell)
-            if index >= n:
-                continue
-            self.content.fill((0, 0, 0))
-            games[index].draw(self.content)
-            self.screen.blit(pg.transform.scale(self.content, (tile, tile)), cell)
+            col = index % side
+            row = index // side
+            x0 = gap + col * (tw + gap)
+            y0 = gap + row * (th + gap)
+            mosaic[x0:x0 + tw, y0:y0 + th] = 0
+        for index in range(n):
+            col = index % side
+            row = index // side
+            x0 = gap + col * (tw + gap)
+            y0 = gap + row * (th + gap)
+            mosaic[x0:x0 + tw, y0:y0 + th] = snap[index]
+        surf = pg.surfarray.make_surface(mosaic)
+        area = self.sim_rect
+        fit = max(1, min(area.width, area.height) - 8)
+        scaled = pg.transform.scale(surf, (fit, fit))
+        pg.draw.rect(self.screen, BACKGROUND, area)
+        self.screen.blit(scaled, scaled.get_rect(center=area.center))
 
-    def _present(self, games=None):
+    def _present(self, tiles=None):
         self.screen.fill((50, 50, 50))
-        if games:
-            self._draw_game_grid(games)
+        if tiles is not None:
+            self._draw_game_grid(tiles)
         else:
             self.screen.blit(pg.transform.scale(self.content, self.contentSize), self.contentPos)
         self.draw_graph()
         self.manager.draw_ui(self.screen)
         pg.display.flip()
 
-    def _show_training_games(self, games):
+    def _pump_training_events(self):
         for event in pg.event.get():
             if event.type == pg.QUIT:
                 raise SystemExit
             if event.type == pg.VIDEORESIZE:
                 self.width, self.height = event.w, event.h
                 self.resize()
+                self._watch_full_paint = True
             self.manager.process_events(event)
-        self.manager.update(self.clock.tick(60) / 1000.0)
-        self._present(games)
+
+    def _keep_training_alive(self):
+        dt = self.clock.tick(30) / 1000.0
+        self._pump_training_events()
+        self.manager.update(dt)
+        self._present()
+
+    def _show_training_games(self, tiles):
+        dt = self.clock.tick(60) / 1000.0
+        self._pump_training_events()
+        if self._watch_full_paint:
+            self.manager.update(dt)
+            self._present(tiles)
+            self._watch_full_paint = False
+            return
+        self._draw_game_grid(tiles)
+        pg.display.update(self.sim_rect)
 
     def _playing_gaussian_candidates(self):
         if not self.process:
@@ -953,7 +1029,7 @@ class Gui:
                         self._request_start_game()
 
                 elif event.ui_element == self.btn_train and not self._training:
-                    self._start_train()
+                    self._ask_train()
 
             self.manager.process_events(event)
 
@@ -989,13 +1065,14 @@ class Gui:
                 self._train_step()
             except Exception as exc:
                 self._training = False
+                self._watch_games = False
                 self.btn_add.enable()
                 self.btn_clear.enable()
                 self.btn_train.enable()
                 self.btn_train.set_text('Start Train')
                 self._refresh_game_button()
                 self._report_error(exc)
-        if not self._training:
+        if not self._watch_games or not self._training:
             self._present()
         return True, accumulator
 

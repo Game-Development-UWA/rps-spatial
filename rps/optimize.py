@@ -62,7 +62,7 @@ def default_params():
 class Optimizer:
     """One run: live population ids, champion archive, and the breeding knobs."""
 
-    def __init__(self, catalog=None, mu=None, lam=None, replacement=None, crossover=None, adaptive=None, mutation_sigma=None, generations=None, rng=None, visualize=None):
+    def __init__(self, catalog=None, mu=None, lam=None, replacement=None, crossover=None, adaptive=None, mutation_sigma=None, generations=None, rng=None, visualize=None, tick=None):
         self.catalog = Catalog() if catalog is None else catalog
         self.mu = settings.MU if mu is None else mu
         self.lam = settings.LAMBDA if lam is None else lam
@@ -73,6 +73,7 @@ class Optimizer:
         self.generations = settings.GENERATIONS if generations is None else generations
         self.rng = np.random.default_rng() if rng is None else rng
         self.visualize = visualize
+        self.tick = tick
         self.population = []
         self.archive = []
         self.parent_score = {}
@@ -131,7 +132,7 @@ class Optimizer:
 
         pool = list(self.population) + champions
 
-        scores, ladder = Tournament(self.catalog, pool, self.rng, self.visualize).run()
+        scores, ladder = Tournament(self.catalog, pool, self.rng, self.visualize, self.tick).run()
         place = {gid: index for index, gid in enumerate(ladder)}
 
         blocked = set(self.archive)
@@ -214,11 +215,12 @@ class Tournament:
     Fitness is the sum of placement points. That sum is the rung reached.
     """
 
-    def __init__(self, catalog, population, rng, visualize=None):
+    def __init__(self, catalog, population, rng, visualize=None, tick=None):
         self.catalog = catalog
         self.population = population
         self.rng = rng
         self.visualize = visualize
+        self.tick = tick
 
     def run(self):
         """Seat each round from the ladder, then add the placement points from that match."""
@@ -226,7 +228,11 @@ class Tournament:
         if len(self.population) % n != 0:
             raise ValueError('tournament population must be divisible by ' + str(n) + ', got ' + str(len(self.population)))
 
-        batch = ParallelBatch([self.client(gid) for gid in self.population], on_frame=self.visualize)
+        batch = ParallelBatch(
+            [self.client(gid) for gid in self.population],
+            on_frame=self.visualize,
+            tick=self.tick,
+        )
         points = {gid: 0.0 for gid in self.population}
         ladder = list(self.population)
         self.rng.shuffle(ladder)
