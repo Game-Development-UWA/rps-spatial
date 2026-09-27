@@ -30,8 +30,13 @@ class Deck {
   }
 
   bind() {
+    document.addEventListener("click", (e) => {
+      const btn = e.target && e.target.closest && e.target.closest("button");
+      if (btn) btn.blur();
+    });
     document.addEventListener("keydown", (e) => {
-      if (e.target && e.target.closest && e.target.closest("button, input, textarea")) return;
+      if (e.target && e.target.closest && e.target.closest("input, textarea, select")) return;
+      if (e.target && e.target.blur && e.target.closest && e.target.closest("button")) e.target.blur();
       const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
       if (key === "ArrowUp" || key === "w") {
         e.preventDefault();
@@ -175,12 +180,13 @@ class Deck {
     this.field.hintPanBias(this.motion.bias1);
     this.updatePager();
     this.syncLive();
+    if (this.onNavigate) this.onNavigate(this.pendingSlide);
   }
 
   settle() {
     const slide = this.pendingSlide || this.columns[this.col][this.row];
     this.pendingSlide = null;
-    if (this.onNavigate) this.onNavigate(slide);
+    if (this.onArrive) this.onArrive(slide);
   }
 
   syncLive() {
@@ -247,6 +253,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const demos = new DemoHost();
   mountDemos(demos);
   deck.onNavigate = (slide) => demos.show(slide);
+  deck.onArrive = (slide) => demos.arm(slide);
   demos.show(deck.columns[deck.col][deck.row]);
   field.beforeDraw = () => deck.tick();
   field.afterDraw = (seconds, dt) => {

@@ -20,6 +20,15 @@
   <section class="stack">
     <section class="slide">
       <div class="content">
+        <h1>State space, language, and expressivity</h1>
+        <p class="lede">The level of precision with which you describe a problem has a direct impact on its ability to be solved. More expressive language creates a larger state space.</p>
+      </div>
+      <div class="demo">
+        <div class="demo-panel" data-demo="expressivity"></div>
+      </div>
+    </section>
+    <section class="slide">
+      <div class="content">
         <h1>Previously on Math</h1>
         <p class="lede">For a known, differentiable function, we can find the slope of the function at any point using calculus. This can be used to find important landmarks</p>
       </div>
@@ -59,7 +68,7 @@
     </section>
     <section class="slide">
       <div class="content">
-        <h1>Take a step uphill</h1>
+        <h1>The learning rate</h1>
         <p class="lede">Move a little in the direction of the derivative. \(\alpha\) is how bold that step is: too small and you crawl, too large and you overshoot.</p>
         <p class="formula">\[x \leftarrow x + \alpha\, f'(x)\]</p>
       </div>
@@ -79,8 +88,7 @@
     <section class="slide">
       <div class="content">
         <h1>Many knobs at once</h1>
-        <p class="lede">In higher dimensions the slope is the gradient: a vector of partial derivatives.</p>
-        <p class="formula">\[\theta \leftarrow \theta + \alpha\, \nabla J(\theta)\]</p>
+        <p class="lede">In higher dimensions, we run through each axis and find the slope and step size. Then, we do some vector addition to get the new position.</p>
       </div>
       <div class="demo">
         <div class="demo-panel" data-demo="knobs"></div>

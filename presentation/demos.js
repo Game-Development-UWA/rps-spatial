@@ -16,6 +16,11 @@ class DemoHost {
     this.forEach(slide, (d) => d.enter && d.enter());
   }
 
+  arm(slide) {
+    if (slide !== this.current) return;
+    this.forEach(slide, (d) => d.arm && d.arm());
+  }
+
   forEach(slide, fn) {
     const list = slide && this.bySlide.get(slide);
     if (list) list.forEach(fn);
@@ -499,7 +504,9 @@ class RidgeDemo {
 
 class KnobsDemo {
   constructor(panel) {
-    this.view = new PanelView(panel);
+    this.view = new PanelView(panel, [
+      { type: "button", key: "play", icon: "play", label: "Play", onClick: () => this.toggle() }
+    ]);
     this.plot = new ContourPlot(this.view, knobsJ);
     this.start = { x: 0.02, y: -0.52 };
     this.theta = { x: this.start.x, y: this.start.y };
@@ -515,19 +522,36 @@ class KnobsDemo {
   }
 
   enter() {
+    if (this.view.resize()) {
+      this.plot.layout();
+      this.plot.bake();
+    }
     this.restart();
   }
 
   leave() {
     this.playing = false;
+    this.view.setPlay(false);
   }
 
   restart() {
     this.theta = { x: this.start.x, y: this.start.y };
     this.trail = [];
     this.u = 0;
-    this.playing = true;
+    this.playing = false;
+    this.view.setPlay(false);
     this.draw();
+  }
+
+  toggle() {
+    if (this.playing) {
+      this.playing = false;
+      this.view.setPlay(false);
+      return;
+    }
+    if (this.stalled()) this.restart();
+    this.playing = true;
+    this.view.setPlay(true);
   }
 
   grad() {
@@ -560,7 +584,10 @@ class KnobsDemo {
         if (this.trail.length > 24) this.trail.shift();
         this.theta = nxt;
         this.u = 0;
-        if (this.stalled()) this.playing = false;
+        if (this.stalled()) {
+          this.playing = false;
+          this.view.setPlay(false);
+        }
       }
       this.draw();
     }
@@ -628,18 +655,24 @@ class Hill1DDemo {
       (opts && opts.kind) || "uniform",
       (opts && opts.param) != null ? opts.param : 0.42
     );
-    const controls = (opts && opts.sigma)
-      ? [{
-          type: "range",
-          key: "sigma",
-          label: "σ",
-          min: 0.08,
-          max: 2.4,
-          step: 0.01,
-          value: this.dist.param,
-          onInput: (v) => { this.dist.param = v; }
-        }]
-      : [];
+    const controls = [
+      { type: "button", key: "play", icon: "play", label: "Play", onClick: () => this.toggle() }
+    ];
+    if (opts && opts.sigma) {
+      controls.push({
+        type: "range",
+        key: "sigma",
+        label: "σ",
+        min: 0.08,
+        max: 2.4,
+        step: 0.01,
+        value: this.dist.param,
+        onInput: (v) => {
+          this.dist.param = v;
+          this.draw();
+        }
+      });
+    }
     this.view = new PanelView(panel, controls);
     this.plot = new CurvePlot(this.view, { strip: true });
     this.rng = rngFrom(7);
@@ -662,11 +695,21 @@ class Hill1DDemo {
     this.x = 0;
     this.rejects = 0;
     this.beginCasino();
-    this.alive = true;
+    this.alive = false;
+    this.view.setPlay(false);
+    this.view.resize();
+    this.plot.layout();
+    this.draw();
   }
 
   leave() {
     this.alive = false;
+    this.view.setPlay(false);
+  }
+
+  toggle() {
+    this.alive = !this.alive;
+    this.view.setPlay(this.alive);
   }
 
   beginCasino() {
@@ -759,7 +802,9 @@ class Climb2DDemo {
     this.replace = opts && opts.replace === false ? false : true;
     this.dist = new Neighbourhood("uniform", (opts && opts.width) || 0.22);
     this.fn = (opts && opts.fn) || perlinJ;
-    this.view = new PanelView(panel);
+    this.view = new PanelView(panel, [
+      { type: "button", key: "play", icon: "play", label: "Play", onClick: () => this.toggle() }
+    ]);
     this.plot = new ContourPlot(this.view, this.fn, { strips: true });
     this.pos = { x: -0.4, y: 0.2 };
     this.rng = rngFrom(1);
@@ -789,12 +834,19 @@ class Climb2DDemo {
     this.linger = [];
     this.winner = null;
     this.beginCasino();
+    this.draw();
   }
 
   enter() {}
 
   leave() {
     this.alive = false;
+    this.view.setPlay(false);
+  }
+
+  toggle() {
+    this.alive = !this.alive;
+    this.view.setPlay(this.alive);
   }
 
   beginCasino() {
@@ -926,10 +978,20 @@ class SamplePairDemo {
     const rng = rngFrom((Math.random() * 1e9) | 0);
     const start = { x: -0.7 + rng() * 0.5, y: -0.2 + rng() * 0.6 };
     const seed = (rng() * 1e9) | 0;
+    this.left.view.resize();
+    this.right.view.resize();
+    this.left.plot.layout();
+    this.left.plot.bake();
+    this.right.plot.layout();
+    this.right.plot.bake();
     this.left.reset(start, seed);
     this.right.reset(start, seed + 91);
-    this.left.alive = true;
-    this.right.alive = true;
+    this.left.alive = false;
+    this.right.alive = false;
+    this.left.view.setPlay(false);
+    this.right.view.setPlay(false);
+    this.left.draw();
+    this.right.draw();
   }
 
   leave() {
@@ -1149,7 +1211,9 @@ class ExploreDemo {
 
 class SADemo {
   constructor(panel) {
-    this.view = new PanelView(panel, []);
+    this.view = new PanelView(panel, [
+      { type: "button", key: "play", icon: "play", label: "Play", onClick: () => this.toggle() }
+    ]);
     const flush = panel.hasAttribute("data-no-meter");
     this.plot = new ContourPlot(this.view, designedJ, {
       levels: 12,
@@ -1212,6 +1276,12 @@ class SADemo {
 
   leave() {
     this.alive = false;
+    this.view.setPlay(false);
+  }
+
+  toggle() {
+    this.alive = !this.alive;
+    this.view.setPlay(this.alive);
   }
 
   isIdle() {
@@ -1361,7 +1431,9 @@ class SADemo {
 
 class ILSDemo {
   constructor(panel) {
-    this.view = new PanelView(panel, []);
+    this.view = new PanelView(panel, [
+      { type: "button", key: "play", icon: "play", label: "Play", onClick: () => this.toggle() }
+    ]);
     this.plot = new ContourPlot(this.view, designedJ, { levels: 12 });
     this.local = new Neighbourhood("uniform", 0.16);
     this.kick = new Neighbourhood("gaussian", 0.72);
@@ -1394,6 +1466,12 @@ class ILSDemo {
 
   leave() {
     this.alive = false;
+    this.view.setPlay(false);
+  }
+
+  toggle() {
+    this.alive = !this.alive;
+    this.view.setPlay(this.alive);
   }
 
   isIdle() {
@@ -1487,11 +1565,19 @@ class EscapePairDemo {
     this.seed = seed;
     this.left.reset(this.home, seed);
     this.right.reset(this.home, seed + 4);
-    this.left.alive = true;
-    this.right.alive = true;
+    this.left.draw();
+    this.right.draw();
   }
 
   enter() {
+    [this.left, this.right].forEach((demo) => {
+      demo.view.resize();
+      demo.plot.layout();
+      demo.plot.bake();
+      if (demo.sizeMeter) demo.sizeMeter();
+      demo.alive = false;
+      demo.view.setPlay(false);
+    });
     const rng = rngFrom((Math.random() * 1e9) | 0);
     this.home = {
       x: this.left.plot.xMin + rng() * (this.left.plot.xMax - this.left.plot.xMin),
@@ -1648,12 +1734,17 @@ class GwoDemo {
   }
 
   enter() {
-    this.alive = true;
+    this.alive = false;
     this.cool = 0;
     this.plot.layout();
     this.plot.bake();
     this.record();
     this.draw();
+  }
+
+  arm() {
+    this.alive = true;
+    this.cool = 0;
   }
 
   leave() {
@@ -1707,7 +1798,9 @@ class GwoDemo {
 
 class GeistDemo {
   constructor(panel) {
-    this.view = new PanelView(panel);
+    this.view = new PanelView(panel, [
+      { type: "button", key: "play", icon: "play", label: "Play", onClick: () => this.toggle() }
+    ]);
     this.alive = false;
     this.cycle = 0;
     this.colors = {
@@ -1753,14 +1846,22 @@ class GeistDemo {
   }
 
   enter() {
-    this.alive = true;
+    this.alive = false;
+    this.view.setPlay(false);
     this.cycle = 0;
     this.resetCycle(true);
+    this.view.resize();
     this.draw();
   }
 
   leave() {
     this.alive = false;
+    this.view.setPlay(false);
+  }
+
+  toggle() {
+    this.alive = !this.alive;
+    this.view.setPlay(this.alive);
   }
 
   isIdle() {
@@ -3501,6 +3602,235 @@ class EsDemo {
   }
 }
 
+function hsvRgb(h, s, v) {
+  h = ((h % 360) + 360) % 360;
+  const c = v * s;
+  const hp = h / 60;
+  const x = c * (1 - Math.abs((hp % 2) - 1));
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  if (hp < 1) { r = c; g = x; }
+  else if (hp < 2) { r = x; g = c; }
+  else if (hp < 3) { g = c; b = x; }
+  else if (hp < 4) { g = x; b = c; }
+  else if (hp < 5) { r = x; b = c; }
+  else { r = c; b = x; }
+  const m = v - c;
+  return [
+    Math.round((r + m) * 255),
+    Math.round((g + m) * 255),
+    Math.round((b + m) * 255)
+  ];
+}
+
+function hsvCss(h, s, v) {
+  const rgb = hsvRgb(h, s, v);
+  return "rgb(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + ")";
+}
+
+function hueScreen(hue) {
+  return -hue * Math.PI / 180;
+}
+
+class ExpressivityDemo {
+  constructor(panel) {
+    panel.classList.add("express-panel");
+    this.tab = 0;
+    this.view = new PanelView(panel);
+    this.btns = ["dots", "ring", "cylinder"].map((kind, i) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "express-tab";
+      btn.setAttribute("aria-label", ["Three colours", "Hue circle", "Cylinder"][i]);
+      btn.innerHTML = this.tabMark(kind);
+      btn.addEventListener("click", () => this.setTab(i));
+      return btn;
+    });
+    const bar = document.createElement("div");
+    bar.className = "express-tabs";
+    this.btns.forEach((btn) => bar.appendChild(btn));
+    panel.insertBefore(bar, this.view.stage);
+    this.view.onResize = () => this.draw();
+    this.setTab(0);
+  }
+
+  tabMark(kind) {
+    if (kind === "dots") {
+      return '<span class="express-mark express-dots" aria-hidden="true"><i></i><i></i><i></i></span>';
+    }
+    if (kind === "ring") {
+      return '<span class="express-mark express-ring" aria-hidden="true"></span>';
+    }
+    return '<span class="express-mark express-cyl" aria-hidden="true"><i class="body"></i><i class="foot"></i><i class="cap"></i></span>';
+  }
+
+  setTab(i) {
+    this.tab = i;
+    this.btns.forEach((btn, k) => btn.classList.toggle("on", k === i));
+    this.draw();
+  }
+
+  enter() {
+    this.view.resize();
+    this.draw();
+  }
+
+  leave() {}
+
+  draw() {
+    const ctx = this.view.ctx;
+    const w = this.view.cssW;
+    const h = this.view.cssH;
+    if (!ctx || w < 2 || h < 2) return;
+    ctx.clearRect(0, 0, w, h);
+    if (this.tab === 0) this.drawSamples(ctx, w, h);
+    else if (this.tab === 1) this.drawWheel(ctx, w, h);
+    else this.drawCylinder(ctx, w, h);
+  }
+
+  center(w, h) {
+    const s = Math.min(w, h);
+    return { cx: w * 0.5, cy: h * 0.48, s: s };
+  }
+
+  drawRing(ctx, cx, cy, outer, inner) {
+    const steps = 180;
+    for (let i = 0; i < steps; i++) {
+      const hue0 = (i / steps) * 360;
+      const hue1 = ((i + 1) / steps) * 360;
+      const a0 = hueScreen(hue0);
+      const a1 = hueScreen(hue1);
+      ctx.beginPath();
+      ctx.arc(cx, cy, outer, a0, a1, true);
+      ctx.arc(cx, cy, inner, a1, a0, false);
+      ctx.closePath();
+      ctx.fillStyle = hsvCss((hue0 + hue1) * 0.5, 1, 1);
+      ctx.fill();
+    }
+  }
+
+  drawSamples(ctx, w, h) {
+    const { cx, cy, s } = this.center(w, h);
+    const r = s * 0.3;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.strokeStyle = "rgba(255,255,255,0.28)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    const hues = [0, 120, 240];
+    const dot = Math.max(14, s * 0.055);
+    hues.forEach((hue) => {
+      const a = hueScreen(hue);
+      const x = cx + Math.cos(a) * r;
+      const y = cy + Math.sin(a) * r;
+      ctx.beginPath();
+      ctx.arc(x, y, dot, 0, Math.PI * 2);
+      ctx.fillStyle = hsvCss(hue, 1, 1);
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "rgba(255,255,255,0.85)";
+      ctx.stroke();
+    });
+  }
+
+  drawWheel(ctx, w, h) {
+    const { cx, cy, s } = this.center(w, h);
+    const outer = s * 0.36;
+    this.drawRing(ctx, cx, cy, outer, outer * 0.62);
+    ctx.beginPath();
+    ctx.arc(cx, cy, outer, 0, Math.PI * 2);
+    ctx.strokeStyle = "rgba(255,255,255,0.2)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  drawCylinder(ctx, w, h) {
+    const cx = w * 0.5;
+    const rx = Math.min(w * 0.32, h * 0.32);
+    const ry = rx * 0.36;
+    const yTop = h * 0.3;
+    const yBot = h * 0.74;
+    const n = 72;
+
+    ctx.save();
+    ctx.fillStyle = "rgba(0,0,0,0.28)";
+    ctx.beginPath();
+    ctx.ellipse(cx, yBot + ry * 0.35, rx * 0.92, ry * 0.55, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    const slices = [];
+    for (let i = 0; i < n; i++) slices.push((i / n) * Math.PI * 2);
+    slices.sort((a, b) => Math.sin(a) - Math.sin(b));
+    const da = (Math.PI * 2) / n;
+    slices.forEach((a) => {
+      const a1 = a + da;
+      const hue = -((a + a1) * 0.5) * 180 / Math.PI;
+      const facing = Math.sin((a + a1) * 0.5);
+      const light = 0.42 + 0.58 * (facing * 0.5 + 0.5);
+      const p = (ang, y) => ({
+        x: cx + rx * Math.cos(ang),
+        y: y + ry * Math.sin(ang)
+      });
+      const t0 = p(a, yTop);
+      const t1 = p(a1, yTop);
+      const b0 = p(a, yBot);
+      const b1 = p(a1, yBot);
+      const top = hsvRgb(hue, 1, light);
+      const bot = hsvRgb(hue, 1, light * 0.08);
+      const grd = ctx.createLinearGradient((t0.x + t1.x) * 0.5, yTop, (b0.x + b1.x) * 0.5, yBot);
+      grd.addColorStop(0, "rgb(" + top[0] + "," + top[1] + "," + top[2] + ")");
+      grd.addColorStop(1, "rgb(" + bot[0] + "," + bot[1] + "," + bot[2] + ")");
+      ctx.beginPath();
+      ctx.moveTo(t0.x, t0.y);
+      ctx.lineTo(t1.x, t1.y);
+      ctx.lineTo(b1.x, b1.y);
+      ctx.lineTo(b0.x, b0.y);
+      ctx.closePath();
+      ctx.fillStyle = grd;
+      ctx.fill();
+    });
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(cx, yTop, rx, ry, 0, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.translate(cx, yTop);
+    ctx.scale(1, ry / rx);
+    const rings = 24;
+    const steps = 90;
+    for (let ring = rings; ring >= 1; ring--) {
+      const outer = (ring / rings) * rx;
+      const inner = ((ring - 1) / rings) * rx;
+      const sat = ring / rings;
+      for (let i = 0; i < steps; i++) {
+        const hue0 = (i / steps) * 360;
+        const hue1 = ((i + 1) / steps) * 360;
+        const a0 = hueScreen(hue0);
+        const a1 = hueScreen(hue1);
+        ctx.beginPath();
+        ctx.arc(0, 0, outer, a0, a1, true);
+        ctx.arc(0, 0, Math.max(0.5, inner), a1, a0, false);
+        ctx.closePath();
+        ctx.fillStyle = hsvCss((hue0 + hue1) * 0.5, sat, 1);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+
+    ctx.beginPath();
+    ctx.ellipse(cx, yTop, rx, ry, 0, 0, Math.PI * 2);
+    ctx.strokeStyle = "rgba(255,255,255,0.35)";
+    ctx.lineWidth = 1.25;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.ellipse(cx, yBot, rx, ry, 0, 0, Math.PI);
+    ctx.strokeStyle = "rgba(255,255,255,0.18)";
+    ctx.stroke();
+  }
+}
+
 function mountDemos(host) {
   const slideOf = (el) => el.closest(".slide");
   const panel = (name) => document.querySelector('[data-demo="' + name + '"]');
@@ -3511,6 +3841,7 @@ function mountDemos(host) {
     host.attach(slideOf(el), demo);
     return demo;
   };
+  add("expressivity", (el) => new ExpressivityDemo(el));
   add("ascent", (el) => new AscentDemo(el));
   add("step-alpha", (el) => new AlphaStepDemo(el));
   add("ridge", (el) => new RidgeDemo(el));
