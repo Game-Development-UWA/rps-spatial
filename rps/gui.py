@@ -1,5 +1,6 @@
 import html
 import inspect
+import math
 import traceback
 
 import numpy as np
@@ -618,7 +619,7 @@ class Gui:
         self._stop_game()
         self.train_candidates = []
         self.train_generation = 0
-        self.optimizer = Optimizer(self.catalog)
+        self.optimizer = Optimizer(self.catalog, visualize=self._show_training_games)
         self._training = True
         self.btn_add.disable()
         self.btn_clear.disable()
@@ -627,8 +628,9 @@ class Gui:
         self.btn_train.set_text('Training 0/' + str(self.optimizer.generations))
 
     def _train_step(self):
-        scores = self.optimizer.step()
         self.train_generation = self.train_generation + 1
+        self.btn_train.set_text('Training ' + str(self.train_generation) + '/' + str(self.optimizer.generations))
+        scores = self.optimizer.step()
         ranked = sorted(scores, key=lambda gid: scores[gid], reverse=True)
         colours = generate_colours(len(ranked))
         candidates = []
@@ -638,7 +640,6 @@ class Gui:
                 'dots': gaussian_dots(self.catalog.genome(gid)),
             })
         self.train_candidates = candidates
-        self.btn_train.set_text('Training ' + str(self.train_generation) + '/' + str(self.optimizer.generations))
         if self.train_generation >= self.optimizer.generations:
             self._finish_train()
 
@@ -823,6 +824,55 @@ class Gui:
             self.sim_rect.top + (self.sim_rect.height - self.contentSize[1]) // 2
         )
 
+    def _draw_game_grid(self, games):
+        """Lay the batch's jobs out in a square. The side is ceil(sqrt(jobs))."""
+        n = len(games)
+        if n == 0:
+            return
+        side = math.ceil(math.sqrt(n))
+        area = self.sim_rect
+        pg.draw.rect(self.screen, BACKGROUND, area)
+        gap = 4
+        span = min(area.width, area.height)
+        tile = max(1, (span - (side + 1) * gap) // side)
+        grid = side * tile + (side + 1) * gap
+        ox = area.left + (area.width - grid) // 2
+        oy = area.top + (area.height - grid) // 2
+        for index in range(side * side):
+            row, col = divmod(index, side)
+            cell = pg.Rect(
+                ox + gap + col * (tile + gap),
+                oy + gap + row * (tile + gap),
+                tile, tile,
+            )
+            pg.draw.rect(self.screen, (0, 0, 0), cell)
+            if index >= n:
+                continue
+            self.content.fill((0, 0, 0))
+            games[index].draw(self.content)
+            self.screen.blit(pg.transform.scale(self.content, (tile, tile)), cell)
+
+    def _present(self, games=None):
+        self.screen.fill((50, 50, 50))
+        if games:
+            self._draw_game_grid(games)
+        else:
+            self.screen.blit(pg.transform.scale(self.content, self.contentSize), self.contentPos)
+        self.draw_graph()
+        self.manager.draw_ui(self.screen)
+        pg.display.flip()
+
+    def _show_training_games(self, games):
+        for event in pg.event.get():
+            if event.type == pg.QUIT:
+                raise SystemExit
+            if event.type == pg.VIDEORESIZE:
+                self.width, self.height = event.w, event.h
+                self.resize()
+            self.manager.process_events(event)
+        self.manager.update(self.clock.tick(60) / 1000.0)
+        self._present(games)
+
     def _playing_gaussian_candidates(self):
         if not self.process:
             return []
@@ -909,7 +959,6 @@ class Gui:
 
         self.manager.update(dt)
         accumulator += dt
-        self.screen.fill((50, 50, 50))
 
         if accumulator >= self.stepTime:
             if self.process and not self._printed_results:
@@ -946,10 +995,8 @@ class Gui:
                 self.btn_train.set_text('Start Train')
                 self._refresh_game_button()
                 self._report_error(exc)
-        self.screen.blit(pg.transform.scale(self.content, self.contentSize), self.contentPos)
-        self.draw_graph()
-        self.manager.draw_ui(self.screen)
-        pg.display.flip()
+        if not self._training:
+            self._present()
         return True, accumulator
 
     def run(self):
@@ -959,5 +1006,7 @@ class Gui:
             dt = self.clock.tick(60) / 1000
             try:
                 running, accumulator = self._frame(dt, accumulator)
+            except SystemExit:
+                running = False
             except Exception as exc:
                 self._report_error(exc)

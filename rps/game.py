@@ -1,8 +1,9 @@
 import colorsys
+import inspect
 import multiprocessing as mp
 import os
 import sys
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from heapq import nlargest
 from itertools import combinations
 
@@ -32,13 +33,35 @@ def gather(swarms, indices):
     return parts[0] if len(parts) == 1 else np.concatenate(parts)
 
 
-def play_match(client_list, gridSize=GRIDSIZE, sizes=SWARMSIZE, colours=None, max_steps=MAX_STEPS):
+def clone_client(client):
+    """New client, same constructor arguments.
+
+    A batch reuses population instances across matches. Games that step
+    together cannot share those instances: Gaussian keeps working buffers.
+    """
+    cls = type(client)
+    kwargs = {}
+    for name, param in inspect.signature(cls.__init__).parameters.items():
+        if name == 'self' or param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
+            continue
+        if hasattr(client, name):
+            kwargs[name] = getattr(client, name)
+    return cls(**kwargs)
+
+
+def make_game(client_list, gridSize=GRIDSIZE, sizes=SWARMSIZE, colours=None, clone=False):
+    if clone:
+        client_list = [clone_client(client) for client in client_list]
     n = len(client_list)
     if isinstance(sizes, int):
         sizes = [sizes] * n
     if colours is None:
         colours = generate_colours(n)
-    game = Game(client_list, sizes, colours, gridSize)
+    return Game(client_list, sizes, colours, gridSize)
+
+
+def play_match(client_list, gridSize=GRIDSIZE, sizes=SWARMSIZE, colours=None, max_steps=MAX_STEPS):
+    game = make_game(client_list, gridSize, sizes, colours)
     for _ in range(max_steps):
         result = game.step()
         if result is not None:
@@ -190,11 +213,19 @@ class Game:
 
 
 class ParallelBatch:
-    """Run a batch of matches across worker processes."""
+    """Run a batch of matches across worker processes.
 
-    def __init__(self, population, workers=None):
+    Pass on_frame to draw the batch instead of running it headless. The
+    jobs then step together, and the callback receives every game after
+    each step, in job order. A finished match stays in that list and holds
+    its last frame. Processes cannot draw into the window, so this path
+    uses threads.
+    """
+
+    def __init__(self, population, workers=None, on_frame=None):
         self.population = population
         self.workers = workers or os.cpu_count() or 1
+        self.on_frame = on_frame
 
     @staticmethod
     def _play(client_list):
@@ -213,13 +244,16 @@ class ParallelBatch:
         if not jobs:
             return {'matches': [], 'scores': [0.0] * len(self.population)}
 
-        workers = max(1, min(self.workers, len(jobs)))
-        if workers == 1 or len(jobs) == 1:
-            raw = [ParallelBatch._play(job) for job in jobs]
+        if self.on_frame is not None:
+            raw = self._run_visible(jobs)
         else:
-            ctx = None if sys.platform == 'win32' else mp.get_context('fork')
-            with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
-                raw = list(pool.map(ParallelBatch._play, jobs, chunksize=1))
+            workers = max(1, min(self.workers, len(jobs)))
+            if workers == 1 or len(jobs) == 1:
+                raw = [ParallelBatch._play(job) for job in jobs]
+            else:
+                ctx = None if sys.platform == 'win32' else mp.get_context('fork')
+                with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
+                    raw = list(pool.map(ParallelBatch._play, jobs, chunksize=1))
 
         report, bags = [], [[] for _ in self.population]
         for i, match in enumerate(matches):
@@ -237,6 +271,36 @@ class ParallelBatch:
 
         scores = [sum(bag) / len(bag) if bag else 0.0 for bag in bags]
         return {'matches': report, 'scores': scores}
+
+    def _run_visible(self, jobs):
+        """Step every job together. Each game has its own copied clients."""
+        games = [make_game(job, clone=True) for job in jobs]
+        raw = [None] * len(jobs)
+        active = [True] * len(jobs)
+        steps = [0] * len(jobs)
+        remaining = len(jobs)
+        workers = max(1, min(self.workers, len(jobs)))
+        pool = ThreadPoolExecutor(max_workers=workers) if workers > 1 else None
+        try:
+            self.on_frame(games)
+            while remaining:
+                order = [i for i in range(len(games)) if active[i]]
+                if pool is None:
+                    results = [games[i].step() for i in order]
+                else:
+                    futures = [pool.submit(games[i].step) for i in order]
+                    results = [future.result() for future in futures]
+                for i, result in zip(order, results):
+                    steps[i] = steps[i] + 1
+                    if result is not None or steps[i] >= MAX_STEPS:
+                        raw[i] = games[i].metrics() if result is None else result
+                        active[i] = False
+                        remaining = remaining - 1
+                self.on_frame(games)
+        finally:
+            if pool is not None:
+                pool.shutdown(wait=True)
+        return raw
 
     def fitness(self, results):
         return results['scores']
