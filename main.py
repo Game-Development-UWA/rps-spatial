@@ -1,4 +1,4 @@
-from rps.ui.gui import Gui
+from rps.gui import Gui
 
 
 def main():

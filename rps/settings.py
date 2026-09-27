@@ -30,7 +30,7 @@ MU = 6
 LAMBDA = 12
 GENERATIONS = 10             # generations in one Optimizer.optimize run
 REPLACEMENT = True           # True keeps the mu parents and the offspring; False keeps the offspring only
-CROSSOVER = True             # True breeds from the mean of two parents; False mutates one parent
+CROSSOVER = False             # True breeds from the mean of two parents; False mutates one parent
 
 # Swiss tournament. n is SWARMS.
 TOURNAMENT_ROUNDS = 4

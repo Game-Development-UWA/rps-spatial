@@ -10,9 +10,9 @@ import inspect
 
 import numpy as np
 
-from .. import clients, settings
-from ..catalog import PARAM_KEYS, Catalog
-from ..sim.batch import ParallelBatch
+from . import clients, settings
+from .catalog import PARAM_KEYS, Catalog
+from .game import ParallelBatch
 
 
 def bounds_for(key):

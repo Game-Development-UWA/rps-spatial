@@ -7,11 +7,11 @@ import pygame as pg
 import pygame_gui as pgui
 from pygame_gui.windows import UIMessageWindow
 
-from .. import clients
-from ..catalog import PARAM_KEYS, Catalog
-from ..sim.game import Game, generate_colours, legal_match_count
-from ..evolve.optimize import Optimizer, clip_params, default_params, sample_params
-from ..settings import *
+from . import clients
+from .catalog import PARAM_KEYS, Catalog
+from .game import Game, generate_colours, legal_match_count
+from .optimize import Optimizer, clip_params, default_params, sample_params
+from .settings import *
 
 DOT_COLOUR = {
     'prey': (70, 200, 90),
