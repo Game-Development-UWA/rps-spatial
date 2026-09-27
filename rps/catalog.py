@@ -120,6 +120,13 @@ class Catalog:
         self._write_genomes(rows)
         return gid
 
+    def genome(self, gid):
+        """Parameter dict for one genomes.csv row, looked up by id."""
+        for row in self._read_genomes():
+            if _num(row, 'id', int, 0) == int(gid):
+                return self._kwargs_from_row(row)
+        raise KeyError(gid)
+
     def update_genome(self, gid, name, kwargs):
         rows = self._read_genomes()
         found = False
@@ -135,6 +142,13 @@ class Catalog:
             return self.add_genome(name, kwargs)
         self._write_genomes(rows)
         return gid
+
+    def show(self, gid):
+        rows = self._read_genomes()
+        for row in rows:
+            if _num(row, 'id', int, 0) == int(gid):
+                row['visible'] = 1
+        self._write_genomes(rows)
 
     def hide(self, gid):
         rows = self._read_genomes()

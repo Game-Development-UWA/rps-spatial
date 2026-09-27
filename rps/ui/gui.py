@@ -1,6 +1,5 @@
 import html
 import inspect
-import threading
 import traceback
 
 import numpy as np
@@ -9,18 +8,35 @@ import pygame_gui as pgui
 from pygame_gui.windows import UIMessageWindow
 
 from .. import clients
-from ..catalog import Catalog
+from ..catalog import PARAM_KEYS, Catalog
 from ..sim.game import Game, generate_colours, legal_match_count
-from ..evolve.gaussian import (
-    GAUSSIAN_DOTS,
-    _limits,
-    candidate_dots,
-    clip_gaussian_params,
-    default_gaussian_params,
-    sample_gaussian_params,
-)
+from ..evolve.optimize import Optimizer, clip_params, default_params, sample_params
 from ..settings import *
-from ..evolve.train import Train
+
+DOT_COLOUR = {
+    'prey': (70, 200, 90),
+    'pred': (220, 60, 70),
+    'self': (70, 140, 230),
+    'sep': (20, 50, 140),
+}
+
+
+def gaussian_pairs():
+    """Weight/sigma keys from the catalog, in catalog order, with a plot colour."""
+    pairs = []
+    for key in PARAM_KEYS:
+        if not key.endswith('_weight'):
+            continue
+        name = key[:-len('_weight')]
+        pairs.append((name, key, name + '_sigma', DOT_COLOUR.get(name, (220, 220, 220))))
+    return pairs
+
+
+def gaussian_dots(params):
+    return [
+        (name, params.get(weight_key, 0.0), params.get(sigma_key, 0.0), colour)
+        for name, weight_key, sigma_key, colour in gaussian_pairs()
+    ]
 
 
 def _graph_font(size):
@@ -78,7 +94,7 @@ def draw_weight_sigma_graph(surf, candidates, highlight=None, labels=True):
     pg.draw.rect(surf, (32, 32, 38), plot)
     pg.draw.rect(surf, (140, 140, 150), plot, 1)
 
-    (lo_w, hi_w), (lo_s, hi_s), _ = _limits()
+    (lo_w, hi_w), (lo_s, hi_s) = WEIGHT, SIGMA
     span_w = hi_w - lo_w or 1.0
     span_s = hi_s - lo_s or 1.0
 
@@ -122,7 +138,7 @@ def draw_weight_sigma_graph(surf, candidates, highlight=None, labels=True):
 
     lx = plot.left
     ly = 4
-    for label, _, _, colour in GAUSSIAN_DOTS:
+    for label, _, _, colour in gaussian_pairs():
         pg.draw.circle(surf, colour, (lx + 6, ly + 8), 5)
         rect = _blit_label(surf, label, (lx + 16, ly + 8), small, anchor='midleft')
         lx = rect.right + 14
@@ -202,7 +218,7 @@ class GaussianConfigWindow(pgui.elements.UIWindow):
 
     def __init__(self, manager, callback, screen_size, params=None, confirm_label=None):
         self.callback = callback
-        self.params = clip_gaussian_params(params or default_gaussian_params())
+        self.params = clip_params(params or default_params())
         self.drag = None
         win_w, win_h = 560, 520
         center = ((screen_size[0] - win_w) // 2, (screen_size[1] - win_h) // 2)
@@ -230,7 +246,7 @@ class GaussianConfigWindow(pgui.elements.UIWindow):
         self.redraw()
 
     def _randomise(self):
-        self.params = sample_gaussian_params()
+        self.params = sample_params()
         self.cell_entry.set_text(str(self.params.get('cell', 2)))
         self.redraw()
 
@@ -241,18 +257,18 @@ class GaussianConfigWindow(pgui.elements.UIWindow):
             self.params['cell'] = int(self.cell_entry.get_text())
         except ValueError:
             pass
-        self.callback('Gaussian', clients.Gaussian, clip_gaussian_params(self.params))
+        self.callback('Gaussian', clients.Gaussian, clip_params(self.params))
         self.kill()
 
     def redraw(self):
         self.plot_rect = draw_weight_sigma_graph(self.plot_surf, [{
             'colour': (220, 220, 220),
-            'dots': candidate_dots(self.params),
+            'dots': gaussian_dots(self.params),
         }])
         self.plot_image.set_image(self.plot_surf.convert())
 
     def _from_px(self, pos):
-        (lo_w, hi_w), (lo_s, hi_s), _ = _limits()
+        (lo_w, hi_w), (lo_s, hi_s) = WEIGHT, SIGMA
         rel = (pos[0] - self.plot_rect.left, pos[1] - self.plot_rect.top)
         nx = np.clip(rel[0] / max(1, self.plot_rect.width), 0, 1)
         ny = np.clip(1.0 - rel[1] / max(1, self.plot_rect.height), 0, 1)
@@ -273,8 +289,8 @@ class GaussianConfigWindow(pgui.elements.UIWindow):
         if event.type == pg.MOUSEBUTTONDOWN and event.button == 1:
             local = self._local_pos(event)
             best, best_d = None, 14 ** 2
-            (lo_w, hi_w), (lo_s, hi_s), _ = _limits()
-            for i, (_, _w, _s, _) in enumerate(candidate_dots(self.params)):
+            (lo_w, hi_w), (lo_s, hi_s) = WEIGHT, SIGMA
+            for i, (_, _w, _s, _) in enumerate(gaussian_dots(self.params)):
                 px = self.plot_rect.left + (_w - lo_w) / (hi_w - lo_w) * self.plot_rect.width
                 py = self.plot_rect.bottom - (_s - lo_s) / (hi_s - lo_s) * self.plot_rect.height
                 d = (local[0] - px) ** 2 + (local[1] - py) ** 2
@@ -287,10 +303,10 @@ class GaussianConfigWindow(pgui.elements.UIWindow):
             self.drag = None
         elif event.type == pg.MOUSEMOTION and self.drag is not None:
             weight, sigma = self._from_px(self._local_pos(event))
-            _, wkey, skey, _ = GAUSSIAN_DOTS[self.drag]
+            _, wkey, skey, _ = gaussian_pairs()[self.drag]
             self.params[wkey] = weight
             self.params[skey] = sigma
-            self.params = clip_gaussian_params(self.params)
+            self.params = clip_params(self.params)
             self.redraw()
             return True
         return handled
@@ -334,7 +350,7 @@ def add_client_preview(container, manager, client, rect, colour=(200, 200, 200))
     if client['cls'] is clients.Gaussian:
         thumb = pg.Surface(rect.size)
         draw_weight_sigma_graph(
-            thumb, [{'colour': colour, 'dots': candidate_dots(client['kwargs'])}],
+            thumb, [{'colour': colour, 'dots': gaussian_dots(client['kwargs'])}],
             labels=False,
         )
         return pgui.elements.UIImage(rect, thumb, manager, container=container)
@@ -436,13 +452,11 @@ class Gui:
         self.play_clients = []
         self.process = None
         self.colors = []
-        self.trainer = None
-        self.train_candidates = []
-        self._train_lock = threading.Lock()
-        self._train_finished = None
-        self._train_error = None
-        self._train_done = False
         self._error_window = None
+        self.optimizer = None
+        self._training = False
+        self.train_generation = 0
+        self.train_candidates = []
 
         self.graph_history = []
         self.match_rows = []
@@ -578,9 +592,7 @@ class Gui:
         self.graph_history.clear()
         self.match_rows = self.process.metrics()
         self._printed_results = False
-        self.trainer = None
-        with self._train_lock:
-            self.train_candidates = []
+        self.train_candidates = []
         self.update_set_display()
 
     def _stop_game(self):
@@ -602,37 +614,44 @@ class Gui:
             rect, detail, self.manager, window_title=type(exc).__name__,
         )
 
-    def _run_train(self):
-        best = None
-        error = None
-        try:
-            while self.trainer and not self.trainer.done:
-                cands = self.trainer.step()
-                with self._train_lock:
-                    self.train_candidates = cands
-            if self.trainer:
-                best = clip_gaussian_params(self.trainer.best())
-        except Exception as exc:
-            error = exc
-        finally:
-            self._train_finished = best
-            self._train_error = error
-            self._train_done = True
+    def _start_train(self):
+        self._stop_game()
+        self.train_candidates = []
+        self.train_generation = 0
+        self.optimizer = Optimizer(self.catalog)
+        self._training = True
+        self.btn_add.disable()
+        self.btn_clear.disable()
+        self.btn_game.disable()
+        self.btn_train.disable()
+        self.btn_train.set_text('Training 0/' + str(self.optimizer.generations))
+
+    def _train_step(self):
+        scores = self.optimizer.step()
+        self.train_generation = self.train_generation + 1
+        ranked = sorted(scores, key=lambda gid: scores[gid], reverse=True)
+        colours = generate_colours(len(ranked))
+        candidates = []
+        for index, gid in enumerate(ranked):
+            candidates.append({
+                'colour': colours[index],
+                'dots': gaussian_dots(self.catalog.genome(gid)),
+            })
+        self.train_candidates = candidates
+        self.btn_train.set_text('Training ' + str(self.train_generation) + '/' + str(self.optimizer.generations))
+        if self.train_generation >= self.optimizer.generations:
+            self._finish_train()
 
     def _finish_train(self):
-        best = self._train_finished
-        error = self._train_error
-        self._train_finished = None
-        self._train_error = None
-        self._train_done = False
-        self.trainer = None
+        self._training = False
+        shown = list(self.optimizer.archive) or list(self.optimizer.population)
+        for gid in shown:
+            self.catalog.show(gid)
+        self.btn_add.enable()
+        self.btn_clear.enable()
         self.btn_train.enable()
-        if error is not None:
-            self._report_error(error)
-            return
-        if best is not None:
-            self.catalog.add_genome('Gaussian', best)
-            self._reload_set()
+        self.btn_train.set_text('Start Train')
+        self._reload_set()
 
     def _score_by_id(self):
         if not self.process:
@@ -810,7 +829,7 @@ class Gui:
         out = []
         for client, colour in zip(self.play_clients, self.colors):
             if client['cls'] is clients.Gaussian:
-                out.append({'colour': colour, 'dots': candidate_dots(client['kwargs'])})
+                out.append({'colour': colour, 'dots': gaussian_dots(client['kwargs'])})
         return out
 
     def draw_graph(self):
@@ -839,9 +858,7 @@ class Gui:
 
         pg.draw.rect(self.screen, (30, 30, 30), self.overlay_rect)
         pg.draw.rect(self.screen, (100, 100, 100), self.overlay_rect, 2)
-        with self._train_lock:
-            train_cands = list(self.train_candidates)
-        overlay_cands = train_cands or self._playing_gaussian_candidates()
+        overlay_cands = self.train_candidates or self._playing_gaussian_candidates()
         if overlay_cands:
             plot = self.screen.subsurface(self.overlay_rect.inflate(-4, -4))
             draw_weight_sigma_graph(plot, overlay_cands, labels=False)
@@ -857,13 +874,13 @@ class Gui:
             elif event.type == pg.MOUSEMOTION:
                 self._update_prey_hover(event.pos)
 
-            elif event.type == pg.MOUSEBUTTONDOWN and event.button == 1:
+            elif event.type == pg.MOUSEBUTTONDOWN and event.button == 1 and not self._training:
                 for widget, idx in self._set_edit.items():
                     if widget.alive() and widget.get_abs_rect().collidepoint(event.pos):
                         self._open_client_config(idx)
                         break
 
-            elif event.type == pgui.UI_BUTTON_PRESSED and event.ui_element in self._set_remove:
+            elif event.type == pgui.UI_BUTTON_PRESSED and event.ui_element in self._set_remove and not self._training:
                 idx = self._set_remove[event.ui_element]
                 if 0 <= idx < len(self.selected_clients):
                     gid = self.selected_clients[idx].get('id')
@@ -885,19 +902,12 @@ class Gui:
                     else:
                         self._request_start_game()
 
-                elif event.ui_element == self.btn_train and not self.trainer:
-                    self._stop_game()
-                    self.trainer = Train(self.gridSize)
-                    with self._train_lock:
-                        self.train_candidates = self.trainer.candidates()
-                    self.btn_train.disable()
-                    threading.Thread(target=self._run_train, daemon=True).start()
+                elif event.ui_element == self.btn_train and not self._training:
+                    self._start_train()
 
             self.manager.process_events(event)
 
         self.manager.update(dt)
-        if self._train_done:
-            self._finish_train()
         accumulator += dt
         self.screen.fill((50, 50, 50))
 
@@ -925,6 +935,17 @@ class Gui:
                     self._printed_results = True
             accumulator -= self.stepTime
 
+        if self._training:
+            try:
+                self._train_step()
+            except Exception as exc:
+                self._training = False
+                self.btn_add.enable()
+                self.btn_clear.enable()
+                self.btn_train.enable()
+                self.btn_train.set_text('Start Train')
+                self._refresh_game_button()
+                self._report_error(exc)
         self.screen.blit(pg.transform.scale(self.content, self.contentSize), self.contentPos)
         self.draw_graph()
         self.manager.draw_ui(self.screen)
