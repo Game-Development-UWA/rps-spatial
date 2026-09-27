@@ -59,10 +59,14 @@ def default_params():
     return clip_params(params)
 
 
+class TrainingStopped(Exception):
+    """Stop was requested. The match batch that was already running has finished."""
+
+
 class Optimizer:
     """One run: live population ids, champion archive, and the breeding knobs."""
 
-    def __init__(self, catalog=None, mu=None, lam=None, replacement=None, crossover=None, adaptive=None, mutation_sigma=None, generations=None, rng=None, visualize=None, tick=None):
+    def __init__(self, catalog=None, mu=None, lam=None, replacement=None, crossover=None, adaptive=None, mutation_sigma=None, generations=None, rng=None, visualize=None, tick=None, on_bracket=None, on_population=None, stop=None):
         self.catalog = Catalog() if catalog is None else catalog
         self.mu = settings.MU if mu is None else mu
         self.lam = settings.LAMBDA if lam is None else lam
@@ -74,6 +78,9 @@ class Optimizer:
         self.rng = np.random.default_rng() if rng is None else rng
         self.visualize = visualize
         self.tick = tick
+        self.on_bracket = on_bracket
+        self.on_population = on_population
+        self.stop = stop
         self.population = []
         self.archive = []
         self.parent_score = {}
@@ -88,11 +95,16 @@ class Optimizer:
             self.step()
         return self.population
 
+    def _stopped(self):
+        return self.stop is not None and self.stop()
+
     def step(self):
         """One generation. Returns the scores of the individuals who just played."""
+        if self._stopped(): raise TrainingStopped()
         if not self.population:
             self.population = self.initial_population()
         scores, parents = self.selection()
+        if self._stopped(): raise TrainingStopped()
         if self.adapt_mutation:
             self.mutation_sigma = self.adapt_mutation_sigma(scores)
         offspring = self.breed(parents, scores)
@@ -132,7 +144,9 @@ class Optimizer:
 
         pool = list(self.population) + champions
 
-        scores, ladder = Tournament(self.catalog, pool, self.rng, self.visualize, self.tick).run()
+        scores, ladder = Tournament(
+            self.catalog, pool, self.rng, self.visualize, self.tick, self.on_bracket, self.on_population, self.stop,
+        ).run()
         place = {gid: index for index, gid in enumerate(ladder)}
 
         blocked = set(self.archive)
@@ -215,12 +229,15 @@ class Tournament:
     Fitness is the sum of placement points. That sum is the rung reached.
     """
 
-    def __init__(self, catalog, population, rng, visualize=None, tick=None):
+    def __init__(self, catalog, population, rng, visualize=None, tick=None, on_bracket=None, on_population=None, stop=None):
         self.catalog = catalog
         self.population = population
         self.rng = rng
         self.visualize = visualize
         self.tick = tick
+        self.on_bracket = on_bracket
+        self.on_population = on_population
+        self.stop = stop
 
     def run(self):
         """Seat each round from the ladder, then add the placement points from that match."""
@@ -228,6 +245,7 @@ class Tournament:
         if len(self.population) % n != 0:
             raise ValueError('tournament population must be divisible by ' + str(n) + ', got ' + str(len(self.population)))
 
+        self._emit_population(self.population)
         batch = ParallelBatch(
             [self.client(gid) for gid in self.population],
             on_frame=self.visualize,
@@ -236,16 +254,40 @@ class Tournament:
         points = {gid: 0.0 for gid in self.population}
         ladder = list(self.population)
         self.rng.shuffle(ladder)
+        seating = []
         for round_number in range(1, settings.TOURNAMENT_ROUNDS + 1):
+            if self.stop is not None and self.stop():
+                raise TrainingStopped()
             if round_number > 1:
                 ladder.sort(key=lambda gid: points[gid], reverse=True)
-            for rows in batch.run(self.pair(ladder))['matches']:
+            paired = self.pair(ladder)
+            column = []
+            for match in paired:
+                column.append([(self.population[i], None) for i in match])
+            seating.append(column)
+            self._emit_seating(seating)
+            for match_i, rows in enumerate(batch.run(paired)['matches']):
                 awarded = self.placement([row['score'] for row in rows])
                 for index in range(len(rows)):
                     gid = self.population[rows[index]['id']]
                     points[gid] = points[gid] + awarded[index]
+                    seating[-1][match_i][index] = (gid, awarded[index])
+            self._emit_seating(seating)
         ladder.sort(key=lambda gid: points[gid], reverse=True)
         return {gid: points[gid] for gid in ladder}, ladder
+
+    def _emit_population(self, ids):
+        if self.on_population is not None:
+            self.on_population(list(ids))
+
+    def _emit_seating(self, seating):
+        """Hand the GUI a copy. Later rounds must not rewrite an earlier column."""
+        if self.on_bracket is None:
+            return
+        copy = []
+        for column in seating:
+            copy.append([list(match) for match in column])
+        self.on_bracket(copy)
 
     def pair(self, ladder):
         """Disjoint matches for one round, so the batch can run them together.
@@ -262,7 +304,9 @@ class Tournament:
         return matches
 
     def client(self, gid):
-        return clients.Gaussian(gridSize=settings.GRIDSIZE, **self.catalog.genome(gid))
+        params = dict(self.catalog.genome(gid))
+        params.pop('visualize', None)
+        return clients.Gaussian(gridSize=settings.GRIDSIZE, visualize=False, **params)
 
     def placement(self, raw_scores):
         """Points for finishing order. First gets n - 1. A tie splits the places it covers."""

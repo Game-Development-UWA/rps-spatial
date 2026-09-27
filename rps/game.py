@@ -2,7 +2,6 @@ import colorsys
 import inspect
 import multiprocessing as mp
 import os
-import sys
 import time
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from heapq import nlargest
@@ -86,6 +85,11 @@ def _paint_tile(tile, game):
         np.minimum(xs, last, out=xs)
         np.minimum(ys, last, out=ys)
         tile[xs, ys] = swarm.colour
+
+
+def _executor(workers):
+    ctx = mp.get_context('spawn')
+    return ProcessPoolExecutor(max_workers=workers, mp_context=ctx)
 
 
 def _play_visible(job):
@@ -305,8 +309,7 @@ class ParallelBatch:
             if workers == 1 or len(jobs) == 1:
                 raw = [ParallelBatch._play(job) for job in jobs]
             else:
-                ctx = None if sys.platform == 'win32' else mp.get_context('fork')
-                with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
+                with _executor(workers) as pool:
                     raw = list(pool.map(ParallelBatch._play, jobs, chunksize=1))
 
         report, bags = [], [[] for _ in self.population]
@@ -347,8 +350,7 @@ class ParallelBatch:
 
     def _run_pooled(self, jobs):
         workers = max(1, min(self.workers, len(jobs)))
-        ctx = None if sys.platform == 'win32' else mp.get_context('fork')
-        pool = ProcessPoolExecutor(max_workers=workers, mp_context=ctx)
+        pool = _executor(workers)
         futures = [pool.submit(ParallelBatch._play, job) for job in jobs]
         return self._await(pool, futures, self.tick or (lambda: time.sleep(0.02)))
 
@@ -361,8 +363,7 @@ class ParallelBatch:
             tiles = np.ndarray((count, tile, tile, 3), dtype=np.uint8, buffer=shm.buf)
             tiles.fill(0)
             workers = max(1, min(self.workers, count))
-            ctx = None if sys.platform == 'win32' else mp.get_context('fork')
-            pool = ProcessPoolExecutor(max_workers=workers, mp_context=ctx)
+            pool = _executor(workers)
             futures = [
                 pool.submit(_play_visible, (job, i, shm.name, tile, count))
                 for i, job in enumerate(jobs)

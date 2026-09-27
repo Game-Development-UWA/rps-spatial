@@ -1,6 +1,7 @@
 import html
 import inspect
 import math
+import os
 import traceback
 
 import numpy as np
@@ -11,7 +12,7 @@ from pygame_gui.windows import UIMessageWindow
 from . import clients
 from .catalog import PARAM_KEYS, Catalog
 from .game import Game, generate_colours, legal_match_count
-from .optimize import Optimizer, clip_params, default_params, sample_params
+from .optimize import Optimizer, TrainingStopped, clip_params, default_params, sample_params
 from .settings import *
 
 DOT_COLOUR = {
@@ -38,6 +39,77 @@ def gaussian_dots(params):
         (name, params.get(weight_key, 0.0), params.get(sigma_key, 0.0), colour)
         for name, weight_key, sigma_key, colour in gaussian_pairs()
     ]
+
+
+def _unit(value, bounds):
+    lo, hi = bounds
+    span = hi - lo or 1.0
+    return min(1.0, max(0.0, (float(value) - lo) / span))
+
+
+def _rgb(red, green, blue):
+    """Lift a 0–1 channel so a quiet strategy stays visible on the dark panels."""
+    return tuple(int(round(32 + 208 * min(1.0, max(0.0, channel)))) for channel in (red, green, blue))
+
+
+def strategy_gradient(params):
+    """Two colours for one genome: how it acts, then how widely it acts.
+
+    Red is fleeing predators, green is chasing prey. Blue is the local force:
+    deep blue when separation wins, pale blue when cohesion wins. The first
+    colour is those three weights. The second is the matching sigmas.
+    """
+    prey_w = _unit(params.get('prey_weight', WEIGHT[0]), WEIGHT)
+    pred_w = _unit(params.get('pred_weight', WEIGHT[0]), WEIGHT)
+    self_w = _unit(params.get('self_weight', WEIGHT[0]), WEIGHT)
+    sep_w = _unit(params.get('sep_weight', WEIGHT[0]), WEIGHT)
+    prey_s = _unit(params.get('prey_sigma', SIGMA[0]), SIGMA)
+    pred_s = _unit(params.get('pred_sigma', SIGMA[0]), SIGMA)
+    self_s = _unit(params.get('self_sigma', SIGMA[0]), SIGMA)
+    sep_s = _unit(params.get('sep_sigma', SIGMA[0]), SIGMA)
+    spread = sep_w >= self_w
+
+    def pack(flee, chase, local, spreading):
+        if spreading:
+            return _rgb(flee, chase, local)
+        return _rgb(max(flee, local), max(chase, local), local)
+
+    return (
+        pack(pred_w, prey_w, sep_w if spread else self_w, spread),
+        pack(pred_s, prey_s, sep_s if spread else self_s, spread),
+    )
+
+
+def plot_candidate(params):
+    return {'gradient': strategy_gradient(params), 'dots': gaussian_dots(params)}
+
+
+def _lerp_rgb(start, end, t):
+    return tuple(int(start[i] + (end[i] - start[i]) * t) for i in range(3))
+
+
+def _draw_gradient_lines(surf, start, end, pts, width):
+    if len(pts) < 2:
+        return
+    lengths = [math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(pts, pts[1:])]
+    total = sum(lengths)
+    if total <= 0:
+        pg.draw.lines(surf, start, False, pts, width)
+        return
+    walked = 0.0
+    for (a, b), dist in zip(zip(pts, pts[1:]), lengths):
+        t0 = walked / total
+        walked += dist
+        t1 = walked / total
+        steps = max(1, int(dist / 4))
+        for step in range(steps):
+            u0 = step / steps
+            u1 = (step + 1) / steps
+            p0 = (int(a[0] + (b[0] - a[0]) * u0), int(a[1] + (b[1] - a[1]) * u0))
+            p1 = (int(a[0] + (b[0] - a[0]) * u1), int(a[1] + (b[1] - a[1]) * u1))
+            colour = _lerp_rgb(start, end, t0 + (t1 - t0) * (u0 + u1) / 2)
+            if p0 != p1:
+                pg.draw.line(surf, colour, p0, p1, width)
 
 
 def _graph_font(size):
@@ -113,9 +185,12 @@ def draw_weight_sigma_graph(surf, candidates, highlight=None, labels=True):
 
     for i, cand in enumerate(candidates):
         pts = [to_px(weight, sigma) for _, weight, sigma, _ in cand['dots']]
-        ring = cand.get('colour', (230, 230, 230))
-        if len(pts) >= 2:
-            pg.draw.lines(surf, (*ring[:3],), False, pts, 1)
+        gradient = cand.get('gradient')
+        if gradient and len(pts) >= 2:
+            _draw_gradient_lines(surf, gradient[0], gradient[1], pts, 2)
+        elif len(pts) >= 2:
+            ring = cand.get('colour', (230, 230, 230))
+            pg.draw.lines(surf, (*ring[:3],), False, pts, 2)
         for (_, _w, _s, colour), pos in zip(cand['dots'], pts):
             r = 8 if labels and i == highlight else (6 if labels else 3)
             pg.draw.circle(surf, colour, pos, r)
@@ -262,10 +337,7 @@ class GaussianConfigWindow(pgui.elements.UIWindow):
         self.kill()
 
     def redraw(self):
-        self.plot_rect = draw_weight_sigma_graph(self.plot_surf, [{
-            'colour': (220, 220, 220),
-            'dots': gaussian_dots(self.params),
-        }])
+        self.plot_rect = draw_weight_sigma_graph(self.plot_surf, [plot_candidate(self.params)])
         self.plot_image.set_image(self.plot_surf.convert())
 
     def _from_px(self, pos):
@@ -346,14 +418,11 @@ def _tint(colour, amount=0.55):
     return tuple(int(base[i] * (1 - amount) + colour[i] * amount) for i in range(3))
 
 
-def add_client_preview(container, manager, client, rect, colour=(200, 200, 200)):
+def add_client_preview(container, manager, client, rect):
     """Same row body as the set: graph for Gaussian, name otherwise."""
     if client['cls'] is clients.Gaussian:
         thumb = pg.Surface(rect.size)
-        draw_weight_sigma_graph(
-            thumb, [{'colour': colour, 'dots': gaussian_dots(client['kwargs'])}],
-            labels=False,
-        )
+        draw_weight_sigma_graph(thumb, [plot_candidate(client['kwargs'])], labels=False)
         return pgui.elements.UIImage(rect, thumb, manager, container=container)
     params = ", ".join(f"{k}={v}" for k, v in client['kwargs'].items())
     text = f"{client['name']}" + (f" ({params})" if params else "")
@@ -427,44 +496,6 @@ class MatchPickWindow(pgui.elements.UIWindow):
         return handled
 
 
-class TrainWatchWindow(pgui.elements.UIWindow):
-    """Choose whether training draws the matches."""
-
-    def __init__(self, manager, callback, screen_size):
-        self.callback = callback
-        win_w, win_h = 380, 150
-        center = ((screen_size[0] - win_w) // 2, (screen_size[1] - win_h) // 2)
-        super().__init__(
-            pg.Rect(center, (win_w, win_h)),
-            manager, window_display_title='Train',
-        )
-        pgui.elements.UILabel(
-            pg.Rect(12, 8, 350, 24),
-            'See the games as they play?',
-            manager, container=self,
-        )
-        self.btn_watch = pgui.elements.UIButton(
-            pg.Rect(12, 48, 170, 32), 'Watch gameplay', manager, container=self,
-        )
-        self.btn_skip = pgui.elements.UIButton(
-            pg.Rect(192, 48, 170, 32), 'Skip gameplay', manager, container=self,
-        )
-
-    def process_event(self, event):
-        handled = super().process_event(event)
-        if event.type != pgui.UI_BUTTON_PRESSED:
-            return handled
-        if event.ui_element == self.btn_watch:
-            self.callback(True)
-            self.kill()
-            return True
-        if event.ui_element == self.btn_skip:
-            self.callback(False)
-            self.kill()
-            return True
-        return handled
-
-
 class Gui:
     def __init__(self):
         pg.init()
@@ -494,9 +525,8 @@ class Gui:
         self._error_window = None
         self.optimizer = None
         self._training = False
-        self._watch_games = False
+        self._stop_train = False
         self._watch_full_paint = True
-        self._train_prompt = None
         self.train_generation = 0
         self.train_candidates = []
 
@@ -545,6 +575,9 @@ class Gui:
     def instantiate_client(self, cls, grid_size, kwargs):
         sig = inspect.signature(cls.__init__)
         call_kwargs = dict(kwargs)
+        call_kwargs.pop('visualize', None)
+        if cls is clients.Gaussian:
+            call_kwargs['visualize'] = False
         grid_param = next((p for p in sig.parameters if p.lower() in ('gridsize', 'grid_size', 'size')), None)
         if grid_param:
             call_kwargs[grid_param] = grid_size
@@ -612,10 +645,15 @@ class Gui:
         else:
             self.btn_game.enable()
 
+    def _close_popups(self):
+        self.manager.ui_window_stack.clear()
+        self._error_window = None
+
     def _request_start_game(self):
         n = len(self.selected_clients)
         if n < 3:
             return
+        self._close_popups()
         if n == 3:
             self._start_game(self.selected_clients)
             return
@@ -656,58 +694,77 @@ class Gui:
             rect, detail, self.manager, window_title=type(exc).__name__,
         )
 
-    def _ask_train(self):
-        if self._train_prompt is not None and self._train_prompt.alive():
-            return
-        self._train_prompt = TrainWatchWindow(
-            self.manager, self._start_train, (self.width, self.height),
-        )
-
-    def _start_train(self, watch):
+    def _start_train(self):
+        self._close_popups()
         self._stop_game()
         self.train_candidates = []
         self.train_generation = 0
-        self._watch_games = bool(watch)
+        self._stop_train = False
         self._watch_full_paint = True
         self.optimizer = Optimizer(
             self.catalog,
-            visualize=self._show_training_games if watch else None,
-            tick=None if watch else self._keep_training_alive,
+            visualize=self._show_training_games,
+            on_population=self._show_population,
+            stop=self._train_should_stop,
         )
         self._training = True
         self.btn_add.disable()
         self.btn_clear.disable()
         self.btn_game.disable()
+        self.btn_train.enable()
+        self.btn_train.set_text('Stop Train')
+
+    def _train_should_stop(self):
+        return self._stop_train
+
+    def _request_stop_train(self):
+        if not self._training or self._stop_train:
+            return
+        self._stop_train = True
+        self.btn_train.set_text('Stopping...')
         self.btn_train.disable()
-        self.btn_train.set_text('Training 0/' + str(self.optimizer.generations))
 
-    def _train_step(self):
-        self.train_generation = self.train_generation + 1
-        self.btn_train.set_text('Training ' + str(self.train_generation) + '/' + str(self.optimizer.generations))
-        self._watch_full_paint = True
-        scores = self.optimizer.step()
-        ranked = sorted(scores, key=lambda gid: scores[gid], reverse=True)
-        colours = generate_colours(len(ranked))
-        candidates = []
-        for index, gid in enumerate(ranked):
-            candidates.append({
-                'colour': colours[index],
-                'dots': gaussian_dots(self.catalog.genome(gid)),
-            })
-        self.train_candidates = candidates
-        if self.train_generation >= self.optimizer.generations:
-            self._finish_train()
-
-    def _finish_train(self):
+    def _end_train(self):
+        stopped = self._stop_train
         self._training = False
-        shown = list(self.optimizer.archive) or list(self.optimizer.population)
-        for gid in shown:
-            self.catalog.show(gid)
+        self._stop_train = False
+        if self.optimizer is not None:
+            shown = list(self.optimizer.archive)
+            if not stopped and not shown:
+                shown = list(self.optimizer.population)
+            for gid in shown:
+                self.catalog.show(gid)
+            if shown:
+                self._reload_set()
         self.btn_add.enable()
         self.btn_clear.enable()
         self.btn_train.enable()
         self.btn_train.set_text('Start Train')
-        self._reload_set()
+        self._refresh_game_button()
+
+    def _train_step(self):
+        if self._stop_train:
+            self._end_train()
+            return
+        self.train_generation = self.train_generation + 1
+        total = self.optimizer.generations
+        self.btn_train.set_text('Stop Train ' + str(self.train_generation) + '/' + str(total))
+        self._watch_full_paint = True
+        try:
+            scores = self.optimizer.step()
+        except TrainingStopped:
+            self._end_train()
+            return
+        ranked = sorted(scores, key=lambda gid: scores[gid], reverse=True)
+        candidates = []
+        for gid in ranked:
+            params = self.catalog.genome(gid)
+            candidates.append(plot_candidate(params))
+        self.train_candidates = candidates
+        self._paint_overlay()
+        pg.display.update(self.overlay_rect)
+        if self._stop_train or self.train_generation >= self.optimizer.generations:
+            self._end_train()
 
     def _score_by_id(self):
         if not self.process:
@@ -841,7 +898,7 @@ class Gui:
             self._set_remove[btn] = idx
             self._set_widgets.append(btn)
             preview = add_client_preview(
-                self.set_scroll, self.manager, client, pg.Rect(36, y + pad, body_w, row_h), colour,
+                self.set_scroll, self.manager, client, pg.Rect(36, y + pad, body_w, row_h),
             )
             self._set_edit[preview] = idx
             self._set_widgets.append(preview)
@@ -922,21 +979,20 @@ class Gui:
         self.manager.draw_ui(self.screen)
         pg.display.flip()
 
+    def _is_quit(self, event):
+        return event.type in (pg.QUIT, pg.WINDOWCLOSE)
+
     def _pump_training_events(self):
         for event in pg.event.get():
-            if event.type == pg.QUIT:
+            if self._is_quit(event):
                 raise SystemExit
             if event.type == pg.VIDEORESIZE:
                 self.width, self.height = event.w, event.h
                 self.resize()
                 self._watch_full_paint = True
+            elif event.type == pgui.UI_BUTTON_PRESSED and event.ui_element == self.btn_train:
+                self._request_stop_train()
             self.manager.process_events(event)
-
-    def _keep_training_alive(self):
-        dt = self.clock.tick(30) / 1000.0
-        self._pump_training_events()
-        self.manager.update(dt)
-        self._present()
 
     def _show_training_games(self, tiles):
         dt = self.clock.tick(60) / 1000.0
@@ -953,9 +1009,9 @@ class Gui:
         if not self.process:
             return []
         out = []
-        for client, colour in zip(self.play_clients, self.colors):
+        for client in self.play_clients:
             if client['cls'] is clients.Gaussian:
-                out.append({'colour': colour, 'dots': gaussian_dots(client['kwargs'])})
+                out.append(plot_candidate(client['kwargs']))
         return out
 
     def draw_graph(self):
@@ -982,16 +1038,36 @@ class Gui:
                 if len(points) > 1:
                     pg.draw.lines(self.screen, tuple(int(c) for c in color[:3]), False, points, 2)
 
+        self._paint_overlay()
+
+    def _overlay_candidates(self):
+        return self.train_candidates or self._playing_gaussian_candidates()
+
+    def _paint_overlay(self):
         pg.draw.rect(self.screen, (30, 30, 30), self.overlay_rect)
         pg.draw.rect(self.screen, (100, 100, 100), self.overlay_rect, 2)
-        overlay_cands = self.train_candidates or self._playing_gaussian_candidates()
-        if overlay_cands:
-            plot = self.screen.subsurface(self.overlay_rect.inflate(-4, -4))
-            draw_weight_sigma_graph(plot, overlay_cands, labels=False)
+        candidates = self._overlay_candidates()
+        if not candidates:
+            return
+        plot = self.screen.subsurface(self.overlay_rect.inflate(-4, -4))
+        draw_weight_sigma_graph(plot, candidates, labels=False)
+
+    def _show_population(self, ids):
+        """Parameter square for the genomes about to play this tournament."""
+        candidates = []
+        for gid in ids:
+            try:
+                params = self.catalog.genome(gid)
+            except KeyError:
+                continue
+            candidates.append(plot_candidate(params))
+        self.train_candidates = candidates
+        self._paint_overlay()
+        pg.display.update(self.overlay_rect)
 
     def _frame(self, dt, accumulator):
         for event in pg.event.get():
-            if event.type == pg.QUIT:
+            if self._is_quit(event):
                 return False, accumulator
             if event.type == pg.VIDEORESIZE:
                 self.width, self.height = event.w, event.h
@@ -1028,8 +1104,11 @@ class Gui:
                     else:
                         self._request_start_game()
 
-                elif event.ui_element == self.btn_train and not self._training:
-                    self._ask_train()
+                elif event.ui_element == self.btn_train:
+                    if self._training:
+                        self._request_stop_train()
+                    else:
+                        self._start_train()
 
             self.manager.process_events(event)
 
@@ -1064,26 +1143,33 @@ class Gui:
             try:
                 self._train_step()
             except Exception as exc:
+                self._stop_train = False
                 self._training = False
-                self._watch_games = False
                 self.btn_add.enable()
                 self.btn_clear.enable()
                 self.btn_train.enable()
                 self.btn_train.set_text('Start Train')
                 self._refresh_game_button()
                 self._report_error(exc)
-        if not self._watch_games or not self._training:
+        if not self._training:
             self._present()
         return True, accumulator
 
     def run(self):
         accumulator = 0.0
         running = True
-        while running:
-            dt = self.clock.tick(60) / 1000
-            try:
-                running, accumulator = self._frame(dt, accumulator)
-            except SystemExit:
-                running = False
-            except Exception as exc:
-                self._report_error(exc)
+        aborted = False
+        try:
+            while running:
+                dt = self.clock.tick(60) / 1000
+                try:
+                    running, accumulator = self._frame(dt, accumulator)
+                except SystemExit:
+                    aborted = True
+                    running = False
+                except Exception as exc:
+                    self._report_error(exc)
+        finally:
+            pg.quit()
+        if aborted:
+            os._exit(0)
