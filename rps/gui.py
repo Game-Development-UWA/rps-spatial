@@ -88,6 +88,15 @@ def _lerp_rgb(start, end, t):
     return tuple(int(start[i] + (end[i] - start[i]) * t) for i in range(3))
 
 
+def _fill_h_gradient(surf, rect, start, end):
+    if rect.width <= 0 or rect.height <= 0:
+        return
+    span = max(1, rect.width - 1)
+    for x in range(rect.width):
+        colour = _lerp_rgb(start, end, x / span)
+        pg.draw.line(surf, colour, (rect.left + x, rect.top), (rect.left + x, rect.bottom - 1))
+
+
 def _draw_gradient_lines(surf, start, end, pts, width):
     if len(pts) < 2:
         return
@@ -220,6 +229,75 @@ def draw_weight_sigma_graph(surf, candidates, highlight=None, labels=True):
         lx = rect.right + 14
 
     return plot
+
+
+def draw_bracket(surf, seating, rounds, colours=None):
+    """Columns are rounds. Each card is one match: the genomes that fight each other."""
+    surf.fill((30, 30, 30))
+    width, height = surf.get_size()
+    if width < 8 or height < 8:
+        return
+    font = _graph_font(18)
+    header_font = _graph_font(22)
+    colours = colours or {}
+    pad = 8
+    header_h = 28
+    col_w = (width - pad * 2) / max(1, rounds)
+    n_matches = max((len(column) for column in seating), default=1)
+    body_top = header_h + 2
+    match_h = (height - body_top - pad) / n_matches
+    for r in range(rounds):
+        x = pad + r * col_w
+        playing = (
+            r < len(seating)
+            and any(pts is None for match in seating[r] for _gid, pts in match)
+        )
+        title_colour = (240, 240, 240) if r < len(seating) else (110, 110, 110)
+        _blit_label(
+            surf, f'Round {r + 1}', (x + col_w / 2, 4), header_font,
+            color=title_colour, anchor='midtop', bg=(30, 30, 30),
+        )
+        if r >= len(seating):
+            continue
+        for m, match in enumerate(seating[r]):
+            card = pg.Rect(
+                int(x + 4), int(body_top + m * match_h + 2),
+                max(1, int(col_w - 8)), max(1, int(match_h - 4)),
+            )
+            pg.draw.rect(surf, (36, 36, 42), card)
+            pg.draw.rect(surf, (190, 190, 198) if playing else (80, 80, 88), card, 1)
+            if not match:
+                continue
+            chip_w = card.width / len(match)
+            clip = surf.get_clip()
+            for s, (gid, pts) in enumerate(match):
+                cx = card.left + s * chip_w
+                seat = pg.Rect(int(cx), card.top, max(1, int(chip_w)), card.height)
+                surf.set_clip(seat)
+                if s > 0:
+                    pg.draw.line(surf, (70, 70, 78), (seat.left, card.top + 4), (seat.left, card.bottom - 4), 1)
+                ends = colours.get(gid, ((200, 200, 200), (200, 200, 200)))
+                if not (isinstance(ends, tuple) and len(ends) == 2 and isinstance(ends[0], tuple)):
+                    ends = (ends, ends)
+                bar = pg.Rect(seat.left + 4, seat.top + 3, max(1, seat.width - 8), 5)
+                _fill_h_gradient(surf, bar, ends[0], ends[1])
+                label_y = card.centery if pts is None or card.height < 36 else card.top + 16
+                _blit_label(
+                    surf, str(gid), (seat.left + 8, label_y), font,
+                    anchor='midleft', bg=(36, 36, 42),
+                )
+                if pts is not None and card.height >= 36:
+                    _blit_label(
+                        surf, f'{pts:g}', (seat.centerx, card.bottom - 4), font,
+                        anchor='midbottom', bg=(36, 36, 42),
+                    )
+                elif pts is not None:
+                    _blit_label(
+                        surf, f'{pts:g}', (seat.right - 4, card.centery), font,
+                        anchor='midright', bg=(36, 36, 42),
+                    )
+            surf.set_clip(clip)
+    pg.draw.rect(surf, (100, 100, 100), surf.get_rect(), 2)
 
 
 class ClientSettingsWindow(pgui.elements.UIWindow):
@@ -480,6 +558,8 @@ class Gui:
         self._watch_full_paint = True
         self.train_generation = 0
         self.train_candidates = []
+        self.bracket = None
+        self._bracket_image = None
 
         self.graph_history = []
         self.match_rows = []
@@ -636,6 +716,8 @@ class Gui:
         self.match_rows = self.process.metrics()
         self._printed_results = False
         self.train_candidates = []
+        self.bracket = None
+        self._bracket_image = None
         self.update_set_display()
 
     def _stop_game(self):
@@ -664,6 +746,8 @@ class Gui:
         self.train_generation = 0
         self._stop_train = False
         self._watch_full_paint = True
+        self.bracket = None
+        self._bracket_image = None
         seeds = [
             client['id'] for client in self._roster_clients()
             if client['cls'] is clients.Gaussian and client.get('id') is not None
@@ -671,6 +755,7 @@ class Gui:
         self.optimizer = Optimizer(
             self.catalog,
             visualize=self._show_training_games,
+            on_bracket=self._show_bracket,
             on_population=self._show_population,
             stop=self._train_should_stop,
             seeds=seeds,
@@ -995,10 +1080,14 @@ class Gui:
         return out
 
     def draw_graph(self):
-        pg.draw.rect(self.screen, (30, 30, 30), self.graph_rect)
-        pg.draw.rect(self.screen, (100, 100, 100), self.graph_rect, 2)
+        if self.bracket:
+            self._ensure_bracket_image()
+            self.screen.blit(self._bracket_image, self.graph_rect.topleft)
+        else:
+            pg.draw.rect(self.screen, (30, 30, 30), self.graph_rect)
+            pg.draw.rect(self.screen, (100, 100, 100), self.graph_rect, 2)
 
-        if self.graph_history:
+        if self.graph_history and not self.bracket:
             history = np.asarray(self.graph_history, dtype=np.float32)
             num_graphs = history.shape[1] if history.ndim > 1 else 1
             min_y, max_y = 0.0, float(np.max(history))
@@ -1044,6 +1133,34 @@ class Gui:
         self.train_candidates = candidates
         self._paint_overlay()
         pg.display.update(self.overlay_rect)
+
+    def _ensure_bracket_image(self):
+        size = self.graph_rect.size
+        if self._bracket_image is not None and self._bracket_image.get_size() == size:
+            return
+        self._bracket_image = pg.Surface(size)
+        draw_bracket(self._bracket_image, self.bracket, TOURNAMENT_ROUNDS, self._genotype_colours())
+
+    def _genotype_colours(self):
+        colours = {}
+        for column in self.bracket or []:
+            for match in column:
+                for gid, _pts in match:
+                    if gid in colours:
+                        continue
+                    try:
+                        colours[gid] = strategy_gradient(self.catalog.genome(gid))
+                    except KeyError:
+                        colours[gid] = ((200, 200, 200), (200, 200, 200))
+        return colours
+
+    def _show_bracket(self, seating):
+        self.bracket = seating
+        self._bracket_image = None
+        self._watch_full_paint = True
+        self._ensure_bracket_image()
+        self.screen.blit(self._bracket_image, self.graph_rect.topleft)
+        pg.display.update(self.graph_rect)
 
     def _frame(self, dt, accumulator):
         for event in pg.event.get():
