@@ -412,6 +412,23 @@ def row_frame(size, fill, border):
     return surf
 
 
+def roster_chip(size, selected):
+    surf = pg.Surface(size)
+    if selected:
+        surf.fill((20, 110, 220))
+        w, h = size
+        pts = [
+            (int(w * 0.22), int(h * 0.52)),
+            (int(w * 0.40), int(h * 0.74)),
+            (int(w * 0.80), int(h * 0.26)),
+        ]
+        pg.draw.lines(surf, (255, 255, 255), False, pts, max(2, h // 8))
+    else:
+        surf.fill((42, 42, 48))
+        pg.draw.rect(surf, (90, 90, 98), surf.get_rect(), 1)
+    return surf
+
+
 def _tint(colour, amount=0.55):
     colour = tuple(int(c) for c in colour[:3])
     base = (36, 36, 42)
@@ -427,73 +444,6 @@ def add_client_preview(container, manager, client, rect):
     params = ", ".join(f"{k}={v}" for k, v in client['kwargs'].items())
     text = f"{client['name']}" + (f" ({params})" if params else "")
     return pgui.elements.UILabel(rect, text, manager, container=container)
-
-
-class MatchPickWindow(pgui.elements.UIWindow):
-    """Choose an odd-sized subset (>= 3) when the set has more than three clients."""
-
-    def __init__(self, manager, clients, callback, screen_size):
-        self.callback = callback
-        self.clients = clients
-        list_h = sum(client_row_height(c) + 4 for c in clients) + 8
-        win_w, win_h = 360, min(560, 80 + min(list_h, 360) + 80)
-        center = ((screen_size[0] - win_w) // 2, (screen_size[1] - win_h) // 2)
-        super().__init__(
-            pg.Rect(center, (win_w, win_h)),
-            manager, window_display_title='Select players',
-        )
-        pgui.elements.UILabel(
-            pg.Rect(10, 6, 330, 22),
-            'Choose an odd number of clients (at least 3).',
-            manager, container=self,
-        )
-        self.scroll = _scroll(pg.Rect(8, 32, 336, win_h - 140), manager, self)
-        self.boxes = []
-        y = 4
-        for i, client in enumerate(clients):
-            row_h = client_row_height(client)
-            box = pgui.elements.UICheckBox(
-                pg.Rect(2, y, 22, 22), '',
-                manager, container=self.scroll,
-                initial_state=(i < 3),
-            )
-            self.boxes.append(box)
-            add_client_preview(
-                self.scroll, manager, client, pg.Rect(32, y, 232, row_h),
-            )
-            y += row_h + 4
-        _set_scroll_h(self.scroll, y + 8)
-        self.status = pgui.elements.UILabel(pg.Rect(10, win_h - 100, 330, 22), '', manager, container=self)
-        self.btn_start = pgui.elements.UIButton(
-            pg.Rect(10, win_h - 74, 330, 32), 'Start', manager, container=self,
-        )
-        self._sync()
-
-    def selected(self):
-        return [c for c, box in zip(self.clients, self.boxes) if box.is_checked]
-
-    def _sync(self):
-        n = len(self.selected())
-        ok = legal_match_count(n)
-        self.status.set_text(f'{n} selected' + ('' if ok else ' — need odd count ≥ 3'))
-        if ok:
-            self.btn_start.enable()
-        else:
-            self.btn_start.disable()
-
-    def process_event(self, event):
-        handled = super().process_event(event)
-        if event.type in (pgui.UI_CHECK_BOX_CHECKED, pgui.UI_CHECK_BOX_UNCHECKED):
-            if event.ui_element in self.boxes:
-                self._sync()
-                return True
-        if event.type == pgui.UI_BUTTON_PRESSED and event.ui_element == self.btn_start:
-            chosen = self.selected()
-            if legal_match_count(len(chosen)):
-                self.callback(chosen)
-                self.kill()
-                return True
-        return handled
 
 
 class Gui:
@@ -519,6 +469,7 @@ class Gui:
         }
         self.catalog = Catalog()
         self.selected_clients = []
+        self.roster = set()
         self.play_clients = []
         self.process = None
         self.colors = []
@@ -535,6 +486,7 @@ class Gui:
         self._printed_results = False
 
         self._reload_set()
+        self.roster = {client.get('id') for client in self.selected_clients if client.get('id') is not None}
         self.setup_ui()
         self.resize()
         self._refresh_game_button()
@@ -557,6 +509,7 @@ class Gui:
         self.set_scroll = _scroll(pg.Rect(10, 105, 300, 200), self.manager, self.panel)
         self._set_widgets = []
         self._set_remove = {}
+        self._set_select = {}
         self._set_edit = {}
         self._score_bars = {}
         self._row_frames = {}
@@ -589,11 +542,14 @@ class Gui:
 
     def _reload_set(self):
         self.selected_clients = self.catalog.visible_clients(self.available_classes)
+        live = {client.get('id') for client in self.selected_clients if client.get('id') is not None}
+        self.roster = {gid for gid in self.roster if gid in live}
         if hasattr(self, 'set_scroll'):
             self.update_set_display()
 
     def add_client_callback(self, name, cls, kwargs):
-        self.catalog.add_genome(name, kwargs)
+        gid = self.catalog.add_genome(name, kwargs)
+        self.roster.add(gid)
         self._reload_set()
 
     def edit_client_callback(self, idx, name, cls, kwargs):
@@ -639,30 +595,37 @@ class Gui:
             self.btn_game.set_text('Stop Game')
             self.btn_game.enable()
             return
-        self.btn_game.set_text('Start Game')
-        if len(self.selected_clients) < 3:
-            self.btn_game.disable()
-        else:
+        if legal_match_count(len(self._roster_clients())):
+            self.btn_game.set_text('Start Game')
             self.btn_game.enable()
+        else:
+            self.btn_game.set_text('Start game (must be odd)')
+            self.btn_game.disable()
+
+    def _roster_clients(self):
+        return [client for client in self.selected_clients if client.get('id') in self.roster]
 
     def _close_popups(self):
         self.manager.ui_window_stack.clear()
         self._error_window = None
 
     def _request_start_game(self):
-        n = len(self.selected_clients)
-        if n < 3:
+        roster = self._roster_clients()
+        if not legal_match_count(len(roster)):
             return
         self._close_popups()
-        if n == 3:
-            self._start_game(self.selected_clients)
-            return
-        MatchPickWindow(
-            self.manager, self.selected_clients, self._start_game, (self.width, self.height),
-        )
+        self._start_game(roster)
+
+    def _toggle_roster(self, gid, image):
+        if gid in self.roster:
+            self.roster.discard(gid)
+        else:
+            self.roster.add(gid)
+        image.set_image(roster_chip(image.image.get_size(), gid in self.roster).convert())
+        self._refresh_game_button()
 
     def _start_game(self, roster=None):
-        roster = list(roster or self.selected_clients)
+        roster = list(roster or self._roster_clients())
         if not legal_match_count(len(roster)):
             return
         self.play_clients = roster
@@ -701,11 +664,16 @@ class Gui:
         self.train_generation = 0
         self._stop_train = False
         self._watch_full_paint = True
+        seeds = [
+            client['id'] for client in self._roster_clients()
+            if client['cls'] is clients.Gaussian and client.get('id') is not None
+        ]
         self.optimizer = Optimizer(
             self.catalog,
             visualize=self._show_training_games,
             on_population=self._show_population,
             stop=self._train_should_stop,
+            seeds=seeds,
         )
         self._training = True
         self.btn_add.disable()
@@ -861,6 +829,7 @@ class Gui:
             widget.kill()
         self._set_widgets = []
         self._set_remove = {}
+        self._set_select = {}
         self._set_edit = {}
         self._score_bars = {}
         self._row_frames = {}
@@ -877,8 +846,12 @@ class Gui:
         scores = self._score_by_id()
         colours = self._colour_by_id()
         values = list(scores.values())
-        pad, card_w, bar_w = 4, 276, 56
-        body_w = 164 if scores else 228
+        pad, card_w, bar_w, btn_w = 4, 276, 56, 26
+        left_x = pad + 2
+        right_x = card_w - pad - btn_w
+        inner_x = left_x + btn_w + 4
+        inner_w = right_x - 4 - inner_x
+        body_w = inner_w - bar_w - 4 if scores else inner_w
         for idx, client in self._display_order():
             gid = client.get('id')
             colour = colours.get(gid, (200, 200, 200))
@@ -892,24 +865,31 @@ class Gui:
             )
             self._row_frames[gid] = frame
             self._set_widgets.append(frame)
-            btn = pgui.elements.UIButton(
-                pg.Rect(pad + 2, y + pad, 26, 26), "X", self.manager, container=self.set_scroll
+            select = pgui.elements.UIImage(
+                pg.Rect(left_x, y + pad, btn_w, 26),
+                roster_chip((btn_w, 26), gid in self.roster).convert(),
+                self.manager, container=self.set_scroll,
             )
-            self._set_remove[btn] = idx
-            self._set_widgets.append(btn)
+            self._set_select[select] = gid
+            self._set_widgets.append(select)
             preview = add_client_preview(
-                self.set_scroll, self.manager, client, pg.Rect(36, y + pad, body_w, row_h),
+                self.set_scroll, self.manager, client, pg.Rect(inner_x, y + pad, body_w, row_h),
             )
             self._set_edit[preview] = idx
             self._set_widgets.append(preview)
             if gid in scores:
                 bar = pgui.elements.UIImage(
-                    pg.Rect(36 + body_w + 4, y + pad, bar_w, row_h),
+                    pg.Rect(inner_x + body_w + 4, y + pad, bar_w, row_h),
                     score_bar(scores[gid], values, colour, (bar_w, row_h)).convert(),
                     self.manager, container=self.set_scroll,
                 )
                 self._score_bars[gid] = bar
                 self._set_widgets.append(bar)
+            remove = pgui.elements.UIButton(
+                pg.Rect(right_x, y + pad, btn_w, 26), "X", self.manager, container=self.set_scroll
+            )
+            self._set_remove[remove] = idx
+            self._set_widgets.append(remove)
             y += card_h + 4
         _set_scroll_h(self.set_scroll, y + 8)
         self._set_order_ids = [client.get('id') for _, client in self._display_order()]
@@ -1077,10 +1057,17 @@ class Gui:
                 self._update_prey_hover(event.pos)
 
             elif event.type == pg.MOUSEBUTTONDOWN and event.button == 1 and not self._training:
-                for widget, idx in self._set_edit.items():
+                hit = False
+                for widget, gid in self._set_select.items():
                     if widget.alive() and widget.get_abs_rect().collidepoint(event.pos):
-                        self._open_client_config(idx)
+                        self._toggle_roster(gid, widget)
+                        hit = True
                         break
+                if not hit:
+                    for widget, idx in self._set_edit.items():
+                        if widget.alive() and widget.get_abs_rect().collidepoint(event.pos):
+                            self._open_client_config(idx)
+                            break
 
             elif event.type == pgui.UI_BUTTON_PRESSED and event.ui_element in self._set_remove and not self._training:
                 idx = self._set_remove[event.ui_element]

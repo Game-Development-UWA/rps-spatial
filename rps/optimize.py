@@ -66,7 +66,7 @@ class TrainingStopped(Exception):
 class Optimizer:
     """One run: live population ids, champion archive, and the breeding knobs."""
 
-    def __init__(self, catalog=None, mu=None, lam=None, replacement=None, crossover=None, adaptive=None, mutation_sigma=None, generations=None, rng=None, visualize=None, tick=None, on_bracket=None, on_population=None, stop=None):
+    def __init__(self, catalog=None, mu=None, lam=None, replacement=None, crossover=None, adaptive=None, mutation_sigma=None, generations=None, rng=None, visualize=None, tick=None, on_bracket=None, on_population=None, stop=None, seeds=None):
         self.catalog = Catalog() if catalog is None else catalog
         self.mu = settings.MU if mu is None else mu
         self.lam = settings.LAMBDA if lam is None else lam
@@ -81,6 +81,7 @@ class Optimizer:
         self.on_bracket = on_bracket
         self.on_population = on_population
         self.stop = stop
+        self.seeds = [] if seeds is None else list(seeds)
         self.population = []
         self.archive = []
         self.parent_score = {}
@@ -112,10 +113,23 @@ class Optimizer:
         return scores
 
     def initial_population(self):
-        """Lambda genomes when parents are dropped, mu + lambda when they are kept."""
+        """Seeded ids first, then the usual random fill. Pad so the count is divisible by SWARMS.
+
+        Lambda genomes when parents are dropped, mu + lambda when they are kept.
+        """
         count = self.mu + self.lam if self.keep_parents else self.lam
         population = []
+        seated = set()
+        for gid in self.seeds:
+            gid = int(gid)
+            if gid in seated:
+                continue
+            seated.add(gid)
+            population.append(gid)
         for _ in range(count):
+            gid = self.catalog.add_genome('Gaussian', sample_params(self.rng), visible=0)
+            population.append(gid)
+        while len(population) % settings.SWARMS != 0:
             gid = self.catalog.add_genome('Gaussian', sample_params(self.rng), visible=0)
             population.append(gid)
         return population
