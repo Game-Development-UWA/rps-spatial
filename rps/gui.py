@@ -14,6 +14,7 @@ from .catalog import PARAM_KEYS, Catalog
 from .game import Game, generate_colours, legal_match_count
 from .optimize import Optimizer, TrainingStopped, clip_params, default_params, sample_params
 from .settings import *
+from .settings import GENERATIONS
 
 DOT_COLOUR = {
     'prey': (70, 200, 90),
@@ -800,7 +801,7 @@ class Gui:
             self._end_train()
             return
         self.train_generation = self.train_generation + 1
-        total = self.optimizer.generations
+        total = GENERATIONS
         self.btn_train.set_text('Stop Train ' + str(self.train_generation) + '/' + str(total))
         self._watch_full_paint = True
         try:
@@ -816,7 +817,7 @@ class Gui:
         self.train_candidates = candidates
         self._paint_overlay()
         pg.display.update(self.overlay_rect)
-        if self._stop_train or self.train_generation >= self.optimizer.generations:
+        if self._stop_train or self.train_generation >= GENERATIONS:
             self._end_train()
 
     def _score_by_id(self):

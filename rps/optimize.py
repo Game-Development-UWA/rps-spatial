@@ -64,74 +64,54 @@ class TrainingStopped(Exception):
 
 
 class Optimizer:
-    """One run: live population ids, champion archive, and the breeding knobs."""
+    """One run. EA knobs live in settings; this holds the live ids and archive."""
 
-    def __init__(self, catalog=None, mu=None, lam=None, replacement=None, crossover=None, adaptive=None, mutation_sigma=None, generations=None, rng=None, visualize=None, tick=None, on_bracket=None, on_population=None, stop=None, seeds=None):
+    def __init__(self, catalog=None, seeds=list([]), visualize=None, on_bracket=None, on_population=None, stop=(lambda: False), rng=None):
         self.catalog = Catalog() if catalog is None else catalog
-        self.mu = settings.MU if mu is None else mu
-        self.lam = settings.LAMBDA if lam is None else lam
-        self.keep_parents = settings.REPLACEMENT if replacement is None else replacement if isinstance(replacement, bool) else False
-        self.use_crossover = settings.CROSSOVER if crossover is None else crossover
-        self.adapt_mutation = settings.ADAPTIVE_MUTATION if adaptive is None else adaptive
-        self.mutation_sigma = settings.MUTATION_SIGMA if mutation_sigma is None else mutation_sigma
-        self.generations = settings.GENERATIONS if generations is None else generations
-        self.rng = np.random.default_rng() if rng is None else rng
+        self.seeds = seeds
         self.visualize = visualize
-        self.tick = tick
         self.on_bracket = on_bracket
         self.on_population = on_population
         self.stop = stop
-        self.seeds = [] if seeds is None else list(seeds)
+        self.rng = np.random.default_rng() if rng is None else rng
+        self.mutation_sigma = settings.MUTATION_SIGMA
         self.population = []
         self.archive = []
         self.parent_score = {}
 
-    def optimize(self, generations=None):
+    def optimize(self):
         """Score, adapt, breed, and replace for the whole run. Returns live ids."""
-        generations = self.generations if generations is None else generations
-        self.population = []
-        self.archive = []
-        self.parent_score = {}
-        for _ in range(generations):
+        for _ in range(settings.GENERATIONS):
             self.step()
         return self.population
 
-    def _stopped(self):
-        return self.stop is not None and self.stop()
-
     def step(self):
         """One generation. Returns the scores of the individuals who just played."""
-        if self._stopped(): raise TrainingStopped()
+        if self.stop():
+            raise TrainingStopped()
         if not self.population:
             self.population = self.initial_population()
         scores, parents = self.selection()
-        if self._stopped(): raise TrainingStopped()
-        if self.adapt_mutation:
+        if self.stop():
+            raise TrainingStopped()
+        if settings.ADAPTIVE_MUTATION:
             self.mutation_sigma = self.adapt_mutation_sigma(scores)
         offspring = self.breed(parents, scores)
         self.replace(parents, offspring)
         return scores
 
     def initial_population(self):
-        """Seeded ids first, then the usual random fill. Pad so the count is divisible by SWARMS.
+        """Seeded ids first, then random fill up to the live size.
 
         Lambda genomes when parents are dropped, mu + lambda when they are kept.
+        Seeds count toward that size; extra seeds are dropped.
         """
-        count = self.mu + self.lam if self.keep_parents else self.lam
-        population = []
-        seated = set()
+        count = settings.MU + settings.LAMBDA if settings.REPLACEMENT else settings.LAMBDA
+        population = set()
         for gid in self.seeds:
-            gid = int(gid)
-            if gid in seated:
-                continue
-            seated.add(gid)
-            population.append(gid)
-        for _ in range(count):
-            gid = self.catalog.add_genome('Gaussian', sample_params(self.rng), visible=0)
-            population.append(gid)
-        while len(population) % settings.SWARMS != 0:
-            gid = self.catalog.add_genome('Gaussian', sample_params(self.rng), visible=0)
-            population.append(gid)
+            population.add(int(gid))
+        while len(population) < count:
+            population.add(self.catalog.add_genome('Gaussian', sample_params(self.rng), visible=0))
         return population
 
     def selection(self):
@@ -148,45 +128,33 @@ class Optimizer:
         for gid in self.archive:
             if gid in seated:
                 continue
-            outsiders.append(gid)
             seated.add(gid)
-        if m <= 0 or len(outsiders) < m:
-            champions = []
+            outsiders.append(gid)
+        if m > 0 and len(outsiders) >= m:
+            champions = [int(outsiders[i]) for i in self.rng.choice(len(outsiders), m, replace=False)]
         else:
-            chosen_indexes = self.rng.choice(len(outsiders), m, replace=False)
-            champions = [int(outsiders[idx]) for idx in chosen_indexes]
+            champions = []
 
-        pool = list(self.population) + champions
-
-        scores, ladder = Tournament(
-            self.catalog, pool, self.rng, self.visualize, self.tick, self.on_bracket, self.on_population, self.stop,
-        ).run()
+        scores, ladder = Tournament(self, list(self.population) + champions).run()
         place = {gid: index for index, gid in enumerate(ladder)}
-
-        blocked = set(self.archive)
         ranked = sorted(self.population, key=lambda gid: (-scores[gid], place[gid]))
-        to_add = [gid for gid in ranked if gid not in blocked][:settings.ARCHIVE_TOP]
-        self.archive.extend(to_add)
-        parents = ranked[:self.mu]
-
-        return scores, parents
+        blocked = set(self.archive)
+        self.archive.extend([gid for gid in ranked if gid not in blocked][:settings.ARCHIVE_TOP])
+        return scores, ranked[:settings.MU]
 
     def adapt_mutation_sigma(self, scores):
         """1/5 rule. Raise the mutation sigma when more than a fifth of judged offspring improved."""
-        judged = []
-        for gid in self.population:
-            if gid in self.parent_score:
-                judged.append(gid)
-        if len(judged) == 0:
+        judged = [gid for gid in self.population if gid in self.parent_score]
+        if not judged:
             return self.mutation_sigma
-        successes = 0
-        for gid in judged:
-            if scores[gid] > self.parent_score[gid]:
-                successes = successes + 1
-        rate = successes / len(judged)
-        sigma = self.mutation_sigma * settings.SIGMA_ADAPT if rate > 1 / 5 else self.mutation_sigma / settings.SIGMA_ADAPT if rate < 1 / 5 else self.mutation_sigma
-        sigma = 0.0001 if sigma < 0.0001 else 1.0 if sigma > 1.0 else sigma
-        return sigma
+        rate = sum(1 for gid in judged if scores[gid] > self.parent_score[gid]) / len(judged)
+        if rate > 1 / 5:
+            sigma = self.mutation_sigma * settings.SIGMA_ADAPT
+        elif rate < 1 / 5:
+            sigma = self.mutation_sigma / settings.SIGMA_ADAPT
+        else:
+            sigma = self.mutation_sigma
+        return min(1.0, max(0.0001, sigma))
 
     def breed(self, parents, scores):
         """Lambda offspring. Each child remembers the better parent's score.
@@ -194,12 +162,12 @@ class Optimizer:
         With crossover, that parent is the better of the two. Without it, the child is a mutation of one parent.
         """
         offspring = []
-        while len(offspring) < self.lam:
+        while len(offspring) < settings.LAMBDA:
             parent_a = parents[int(self.rng.integers(0, len(parents)))]
-            if self.use_crossover:
+            if settings.CROSSOVER:
                 parent_b = parents[int(self.rng.integers(0, len(parents)))]
                 genome = self.crossover(parent_a, parent_b)
-                better = scores[parent_a] if scores[parent_a] > scores[parent_b] else scores[parent_b]
+                better = max(scores[parent_a], scores[parent_b])
             else:
                 genome = self.catalog.genome(parent_a)
                 better = scores[parent_a]
@@ -234,74 +202,59 @@ class Optimizer:
 
     def replace(self, parents, offspring):
         """True keeps the mu parents and the offspring. False keeps the offspring only."""
-        self.population = list(parents) + list(offspring) if self.keep_parents else list(offspring)
+        self.population = list(parents) + list(offspring) if settings.REPLACEMENT else list(offspring)
 
 
 class Tournament:
-    """Swiss ladder over one population of genome ids.
+    """Swiss ladder over one pool of genome ids.
 
     Fitness is the sum of placement points. That sum is the rung reached.
     """
 
-    def __init__(self, catalog, population, rng, visualize=None, tick=None, on_bracket=None, on_population=None, stop=None):
-        self.catalog = catalog
-        self.population = population
-        self.rng = rng
-        self.visualize = visualize
-        self.tick = tick
-        self.on_bracket = on_bracket
-        self.on_population = on_population
-        self.stop = stop
+    def __init__(self, opt, pool):
+        self.opt = opt
+        self.pool = pool
 
     def run(self):
         """Seat each round from the ladder, then add the placement points from that match."""
         n = settings.SWARMS
-        if len(self.population) % n != 0:
-            raise ValueError('tournament population must be divisible by ' + str(n) + ', got ' + str(len(self.population)))
+        if len(self.pool) % n != 0:
+            raise ValueError('tournament population must be divisible by ' + str(n) + ', got ' + str(len(self.pool)))
 
-        self._emit_population(self.population)
+        opt = self.opt
+        if opt.on_population is not None:
+            opt.on_population(list(self.pool))
         batch = ParallelBatch(
-            [self.client(gid) for gid in self.population],
-            on_frame=self.visualize,
-            tick=self.tick,
+            [self.client(gid) for gid in self.pool],
+            on_frame=opt.visualize,
         )
-        points = {gid: 0.0 for gid in self.population}
-        ladder = list(self.population)
-        self.rng.shuffle(ladder)
+        points = {gid: 0.0 for gid in self.pool}
+        ladder = list(self.pool)
+        opt.rng.shuffle(ladder)
         seating = []
         for round_number in range(1, settings.TOURNAMENT_ROUNDS + 1):
-            if self.stop is not None and self.stop():
+            if opt.stop():
                 raise TrainingStopped()
             if round_number > 1:
                 ladder.sort(key=lambda gid: points[gid], reverse=True)
             paired = self.pair(ladder)
-            column = []
-            for match in paired:
-                column.append([(self.population[i], None) for i in match])
-            seating.append(column)
+            seating.append([[(self.pool[i], None) for i in match] for match in paired])
             self._emit_seating(seating)
             for match_i, rows in enumerate(batch.run(paired)['matches']):
                 awarded = self.placement([row['score'] for row in rows])
                 for index in range(len(rows)):
-                    gid = self.population[rows[index]['id']]
-                    points[gid] = points[gid] + awarded[index]
+                    gid = self.pool[rows[index]['id']]
+                    points[gid] += awarded[index]
                     seating[-1][match_i][index] = (gid, awarded[index])
             self._emit_seating(seating)
         ladder.sort(key=lambda gid: points[gid], reverse=True)
         return {gid: points[gid] for gid in ladder}, ladder
 
-    def _emit_population(self, ids):
-        if self.on_population is not None:
-            self.on_population(list(ids))
-
     def _emit_seating(self, seating):
         """Hand the GUI a copy. Later rounds must not rewrite an earlier column."""
-        if self.on_bracket is None:
+        if self.opt.on_bracket is None:
             return
-        copy = []
-        for column in seating:
-            copy.append([list(match) for match in column])
-        self.on_bracket(copy)
+        self.opt.on_bracket([[list(match) for match in column] for column in seating])
 
     def pair(self, ladder):
         """Disjoint matches for one round, so the batch can run them together.
@@ -309,16 +262,16 @@ class Tournament:
         The ladder is already ordered. Each match is shuffled so color slots are not fixed.
         """
         n = settings.SWARMS
-        index = {gid: i for i, gid in enumerate(self.population)}
+        index = {gid: i for i, gid in enumerate(self.pool)}
         matches = []
         for start in range(0, len(ladder), n):
             seated = list(ladder[start:start + n])
-            self.rng.shuffle(seated)
+            self.opt.rng.shuffle(seated)
             matches.append(tuple(index[gid] for gid in seated))
         return matches
 
     def client(self, gid):
-        params = dict(self.catalog.genome(gid))
+        params = dict(self.opt.catalog.genome(gid))
         params.pop('visualize', None)
         return clients.Gaussian(gridSize=settings.GRIDSIZE, visualize=False, **params)
 
