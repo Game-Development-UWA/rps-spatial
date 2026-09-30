@@ -3,7 +3,7 @@ const CONFIG = {
   field: {
     background: 31,
     bandDepth: 20,
-    lineMin: 10,
+    lineMin: 50,
     lineRange: 40,
     lineWidth: 1.1,
     levels: 14,

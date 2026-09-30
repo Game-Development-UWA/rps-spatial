@@ -197,10 +197,11 @@ def draw_weight_sigma_graph(surf, candidates, highlight=None, labels=True):
         pts = [to_px(weight, sigma) for _, weight, sigma, _ in cand['dots']]
         gradient = cand.get('gradient')
         if gradient and len(pts) >= 2:
-            _draw_gradient_lines(surf, gradient[0], gradient[1], pts, 2)
+            pass
+            # _draw_gradient_lines(surf, gradient[0], gradient[1], pts, 2)
         elif len(pts) >= 2:
             ring = cand.get('colour', (230, 230, 230))
-            pg.draw.lines(surf, (*ring[:3],), False, pts, 2)
+            # pg.draw.lines(surf, (*ring[:3],), False, pts, 2)
         for (_, _w, _s, colour), pos in zip(cand['dots'], pts):
             r = 8 if labels and i == highlight else (6 if labels else 3)
             pg.draw.circle(surf, colour, pos, r)
